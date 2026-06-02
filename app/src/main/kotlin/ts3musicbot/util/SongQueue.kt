@@ -211,6 +211,7 @@ class SongQueue(
 
     fun skipSong() {
         audioPlayer.stopTrack()
+        playNext()
     }
 
     fun startQueue() {

@@ -85,6 +85,13 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
      * @return returns the channel's id
      */
     private fun getChannelId(channelName: String): Int {
+        val numericId = channelName.toIntOrNull()
+        if (numericId != null) {
+            val channelList = getChannelList()
+            if (channelList.any { it.contains("cid=$numericId(\\s+|$)".toRegex()) }) {
+                return numericId
+            }
+        }
         val targetChannel = channelName.substringAfterLast("/")
         val channelList = getChannelList()
         val channels =

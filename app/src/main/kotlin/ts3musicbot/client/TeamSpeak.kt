@@ -103,6 +103,13 @@ class TeamSpeak(botSettings: BotSettings) : Client(botSettings), TS3Listener {
      * @return returns the channel's id
      */
     private fun getChannelId(channelName: String): Int {
+        val numericId = channelName.toIntOrNull()
+        if (numericId != null) {
+            val channelList = clientSocket.listChannels()
+            if (channelList.any { it.id == numericId }) {
+                return numericId
+            }
+        }
         val targetChannel = channelName.substringAfterLast("/")
         val channelList = clientSocket.listChannels()
         val channels =

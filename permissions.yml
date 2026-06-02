@@ -1,0 +1,19 @@
+permissions:
+  enabled: false
+  required_badges: []
+  required_server_groups: []
+  cache_badges: true
+  cache_ttl_seconds: 300
+  deny_message: "You are not allowed to use music commands."
+  public_commands:
+    - "np"
+    - "q"
+    - "src"
+    - "ping"
+    - "play"
+    - "skip"
+    - "stop"
+    - "pause"
+    - "resume"
+    - "volume"
+    - "loop"

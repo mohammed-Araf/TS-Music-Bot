@@ -1,0 +1,29 @@
+spotify:
+  mode: auto
+  client_id: "YOUR_SPOTIFY_CLIENT_ID"
+  client_secret: "YOUR_SPOTIFY_CLIENT_SECRET"
+soundcloud:
+  mode: auto
+  client_id: "YOUR_SOUNDCLOUD_CLIENT_ID"
+youtube:
+  mode: auto
+  api_key: "YOUR_YOUTUBE_API_KEY"
+search:
+  provider_order:
+    - spotify
+    - soundcloud
+    - youtube
+  timeout_ms:
+    spotify: 2000
+    soundcloud: 2000
+    youtube: 2000
+  retry_failed_provider: false
+streaming:
+  metadata_minimal_mode: true
+  preload_next_track: false
+  cache_tracks: false
+  cache_metadata: true
+boot:
+  fail_if_no_provider_available: true
+  startup_provider_check: true
+  startup_timeout_ms: 10000

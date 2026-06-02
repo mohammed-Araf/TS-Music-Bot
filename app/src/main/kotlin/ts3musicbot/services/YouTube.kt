@@ -1,0 +1,992 @@
+package ts3musicbot.services
+
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
+import org.json.JSONException
+import org.json.JSONObject
+import ts3musicbot.util.Album
+import ts3musicbot.util.Artist
+import ts3musicbot.util.Artists
+import ts3musicbot.util.Description
+import ts3musicbot.util.Followers
+import ts3musicbot.util.Link
+import ts3musicbot.util.LinkType
+import ts3musicbot.util.Name
+import ts3musicbot.util.Playability
+import ts3musicbot.util.Playlist
+import ts3musicbot.util.Playlists
+import ts3musicbot.util.Publicity
+import ts3musicbot.util.ReleaseDate
+import ts3musicbot.util.RequestMethod
+import ts3musicbot.util.Response
+import ts3musicbot.util.SearchQuery
+import ts3musicbot.util.SearchResult
+import ts3musicbot.util.SearchResults
+import ts3musicbot.util.SearchType
+import ts3musicbot.util.Track
+import ts3musicbot.util.TrackList
+import ts3musicbot.util.User
+import ts3musicbot.util.sendHttpRequest
+import java.net.HttpURLConnection
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Base64
+
+class YouTube(customApiKey: String = "") : Service(ServiceType.YOUTUBE) {
+    private val apiUrl = "https://www.googleapis.com/youtube/v3"
+    private val keys =
+        (
+            "PT1nQ1IxbVNsdFdUNUJIYzJFRmROUkhVRDkwYjF3MmFFaDJYc3RVWXM5VlRGRkdS" +
+                "NU5WWTZsVVF8PT1nQ1JaMFlhRkVlZk5WVHVwbFJNTkdNc2QxU0hSbE1vaDFjM3AzWjV4RU8xMUNSNU5WWTZsVVEK"
+        ).let { keys ->
+            val decoder = Base64.getDecoder()
+            String(decoder.decode(keys)).split('|')
+                .map { String(decoder.decode(it.reversed().trim())).trim() }
+        }
+    private val apiKey1 = customApiKey.ifEmpty { keys[0] }
+    private val apiKey2 = keys[1]
+
+    override fun getSupportedSearchTypes() =
+        listOf(
+            LinkType.TRACK,
+            LinkType.VIDEO,
+            LinkType.PLAYLIST,
+            LinkType.CHANNEL,
+        )
+
+    /**
+     * Fetch a video/track from YouTube
+     * @param videoLink link to a video
+     * @return returns a Track containing the video's information.
+     */
+    suspend fun fetchVideo(videoLink: Link): Track {
+        /**
+         * Send a request to YouTube API to get playlist items
+         * @param part tells the API what type of information to return
+         * @return returns a Response
+         */
+        fun sendRequest(
+            part: String = "snippet,status",
+            key: String = apiKey1,
+        ): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/videos?")
+            linkBuilder.append("id=${videoLink.getId(this)}")
+            linkBuilder.append("&part=${part.replace(",", "%2C")}")
+            linkBuilder.append("&key=$key")
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        val formatter = DateTimeFormatter.ISO_INSTANT.withZone(ZoneId.of("Z"))
+        var key = apiKey1
+        var track = Track()
+        withContext(IO) {
+            while (true) {
+                val response = sendRequest(key = key)
+                when (response.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val itemData =
+                                JSONObject(response.data.data).getJSONArray("items").let {
+                                    if (it.length() > 0) {
+                                        it.first()
+                                    } else {
+                                        track = Track(link = videoLink)
+                                        return@withContext
+                                    }
+                                }
+                            itemData as JSONObject
+                            val releaseDate =
+                                ReleaseDate(
+                                    LocalDate.parse(itemData.getJSONObject("snippet").getString("publishedAt"), formatter),
+                                )
+                            val isPlayable =
+                                when (itemData.getJSONObject("status").getString("privacyStatus")) {
+                                    "public", "unlisted" -> true
+                                    else -> false
+                                }
+                            track =
+                                Track(
+                                    Album(releaseDate = releaseDate),
+                                    Artists(
+                                        listOf(
+                                            itemData.getJSONObject("snippet").let { artist ->
+                                                Artist(
+                                                    Name(artist.getString("channelTitle")),
+                                                    Link("https://www.youtube.com/channel/${artist.getString("channelId")}"),
+                                                )
+                                            },
+                                        ),
+                                    ),
+                                    Name(itemData.getJSONObject("snippet").getString("title")),
+                                    Link("https://youtu.be/${itemData.getString("id")}"),
+                                    Playability(isPlayable),
+                                    description = Description(itemData.getJSONObject("snippet").getString("description")),
+                                )
+                            return@withContext
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            this.cancel("Broken JSON")
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            // try with another api key
+                            key = apiKey2
+                        } else {
+                            println("HTTP ERROR! CODE: ${response.code}")
+                            return@withContext
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${response.code}")
+                        return@withContext
+                    }
+                }
+            }
+        }
+        return track
+    }
+
+    override suspend fun fetchTrack(trackLink: Link): Track {
+        return fetchVideo(trackLink)
+    }
+
+    /**
+     * Fetch a playlist's data (not tracks) from YouTube
+     * @param playlistLink link to playlist
+     * @param shouldFetchTracks set to true if the playlist's tracks should be fetched too
+     * @return returns a Playlist containing the given playlist's information
+     */
+    override suspend fun fetchPlaylist(
+        playlistLink: Link,
+        shouldFetchTracks: Boolean,
+    ): Playlist {
+        fun fetchPlaylistData(apiKey: String = apiKey1): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/playlists")
+            linkBuilder.append("?part=snippet%2Cstatus%2CcontentDetails")
+            linkBuilder.append("&id=${playlistLink.getId(this)}")
+            linkBuilder.append("&key=$apiKey")
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        var key = apiKey1
+        return withContext(IO) {
+            var playlist = Playlist()
+            while (true) {
+                val playlistData = fetchPlaylistData(key)
+                when (playlistData.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val playlistJSON = JSONObject(playlistData.data.data).getJSONArray("items").first()
+                            playlistJSON as JSONObject
+                            val listLink = Link("https://www.youtube.com/playlist?list=${playlistJSON.getString("id")}")
+                            playlist =
+                                Playlist(
+                                    Name(playlistJSON.getJSONObject("snippet").getString("title")),
+                                    User(Name(playlistJSON.getJSONObject("snippet").getString("channelTitle"))),
+                                    Description(playlistJSON.getJSONObject("snippet").getString("description")),
+                                    publicity =
+                                        Publicity(playlistJSON.getJSONObject("status").getString("privacyStatus") == "public"),
+                                    tracks =
+                                        if (shouldFetchTracks) {
+                                            fetchPlaylistTracks(listLink)
+                                        } else {
+                                            TrackList(
+                                                List(playlistJSON.getJSONObject("contentDetails").getInt("itemCount")) { Track() },
+                                            )
+                                        },
+                                    link = listLink,
+                                )
+                            break
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            this.cancel("broken JSON")
+                            break
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            // try with another api key
+                            key = apiKey2
+                        } else {
+                            println("HTTP ERROR! CODE: ${playlistData.code}")
+                            break
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${playlistData.code}")
+                        break
+                    }
+                }
+            }
+            playlist
+        }
+    }
+
+    /**
+     * Fetch a list of YouTube videos/tracks in a given playlist
+     * @param playlistLink link to playlist
+     * @param limit limit the amount of tracks to be returned
+     * @return returns a list of videos/tracks
+     */
+    override suspend fun fetchPlaylistTracks(
+        playlistLink: Link,
+        limit: Int,
+    ): TrackList {
+        /**
+         * Send a request to YouTube API to get playlist items
+         * @param maxResults max results to receive. 50 is the maximum per request
+         * @param pageToken token to get a specific page of results, if for example there are more than 50 items.
+         * @param part tells the API what type of information to return
+         * @return returns a Response
+         */
+        fun sendRequest(
+            maxResults: Int = 50,
+            pageToken: String = "",
+            part: String = "snippet,status",
+            apiKey: String = apiKey1,
+        ): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/playlistItems?")
+            linkBuilder.append("playlistId=${playlistLink.getId(this)}")
+            linkBuilder.append("&part=${part.replace(",", "%2C")}")
+            linkBuilder.append("&key=$apiKey")
+            linkBuilder.append("&maxResults=" + if (limit != 0 && limit < maxResults) limit else maxResults)
+            if (pageToken.isNotEmpty()) {
+                linkBuilder.append("&pageToken=$pageToken")
+            }
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        suspend fun parseItems(data: JSONObject): TrackList {
+            val listItems = ArrayList<Track>()
+            var totalItems = data.getJSONObject("pageInfo").getInt("totalResults")
+            if (limit != 0 && totalItems > limit) {
+                totalItems = limit
+            }
+            lateinit var itemData: JSONObject
+            if (totalItems > 50) {
+                var key = apiKey1
+                var pageData = data
+                withContext(IO) {
+                    while (listItems.size < totalItems) {
+                        while (true) {
+                            val result =
+                                sendRequest(
+                                    pageToken =
+                                        if (listItems.isNotEmpty()) {
+                                            pageData.getString(("nextPageToken"))
+                                        } else {
+                                            ""
+                                        },
+                                    apiKey = key,
+                                )
+                            when (result.code.code) {
+                                HttpURLConnection.HTTP_OK -> {
+                                    pageData = JSONObject(result.data.data)
+                                    for (item in pageData.getJSONArray("items")) {
+                                        item as JSONObject
+
+                                        try {
+                                            val title = item.getJSONObject("snippet").getString("title")
+                                            val videoLink =
+                                                "https://youtu.be/${
+                                                    item.getJSONObject("snippet")
+                                                        .getJSONObject("resourceId")
+                                                        .getString("videoId")
+                                                }"
+                                            val isPlayable =
+                                                when (item.getJSONObject("status").getString("privacyStatus")) {
+                                                    "public", "unlisted" -> true
+                                                    else -> false
+                                                }
+                                            val formatter = DateTimeFormatter.ISO_INSTANT.withZone(ZoneId.of("Z"))
+                                            val releaseDate =
+                                                ReleaseDate(
+                                                    LocalDate.parse(
+                                                        item.getJSONObject("snippet").getString("publishedAt"),
+                                                        formatter,
+                                                    ),
+                                                )
+                                            val track =
+                                                Track(
+                                                    Album(releaseDate = releaseDate),
+                                                    Artists(
+                                                        listOf(
+                                                            item.getJSONObject("snippet").let { artist ->
+                                                                Artist(
+                                                                    Name(artist.getString("videoOwnerChannelTitle")),
+                                                                    Link(
+                                                                        "https://www.youtube.com/channel/${
+                                                                            artist.getString("videoOwnerChannelId")
+                                                                        }",
+                                                                    ),
+                                                                )
+                                                            },
+                                                        ),
+                                                    ),
+                                                    Name(title),
+                                                    Link(videoLink),
+                                                    Playability(isPlayable),
+                                                )
+                                            if (limit != 0) {
+                                                if (listItems.size < limit) {
+                                                    listItems.add(track)
+                                                } else {
+                                                    println("Limit reached!")
+                                                    return@withContext
+                                                }
+                                            } else {
+                                                listItems.add(track)
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                            totalItems -= 1
+                                        }
+                                    }
+                                    if (!pageData.has("nextPageToken")) {
+                                        return@withContext
+                                    }
+                                }
+
+                                HttpURLConnection.HTTP_FORBIDDEN -> {
+                                    if (key == apiKey1) {
+                                        key = apiKey2
+                                    } else {
+                                        println("HTTP ERROR! CODE: ${result.code}")
+                                        return@withContext
+                                    }
+                                }
+
+                                else -> {
+                                    println("HTTP ERROR! CODE: ${result.code}")
+                                    return@withContext
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                var key = apiKey1
+                withContext(IO) {
+                    while (true) {
+                        val result = sendRequest(apiKey = key)
+                        when (result.code.code) {
+                            HttpURLConnection.HTTP_OK -> {
+                                itemData = JSONObject(result.data.data)
+                                for (item in itemData.getJSONArray("items")) {
+                                    item as JSONObject
+
+                                    try {
+                                        val title = item.getJSONObject("snippet").getString("title")
+                                        val videoLink =
+                                            "https://youtu.be/${
+                                                item.getJSONObject("snippet")
+                                                    .getJSONObject("resourceId")
+                                                    .getString("videoId")
+                                            }"
+                                        val isPlayable =
+                                            when (item.getJSONObject("status").getString("privacyStatus")) {
+                                                "public", "unlisted" -> true
+                                                else -> false
+                                            }
+                                        val formatter = DateTimeFormatter.ISO_INSTANT.withZone(ZoneId.of("Z"))
+                                        val releaseDate =
+                                            ReleaseDate(
+                                                LocalDate.parse(
+                                                    item.getJSONObject("snippet").getString("publishedAt"),
+                                                    formatter,
+                                                ),
+                                            )
+                                        val track =
+                                            Track(
+                                                Album(releaseDate = releaseDate),
+                                                Artists(
+                                                    listOf(
+                                                        item.getJSONObject("snippet").let { artist ->
+                                                            Artist(
+                                                                Name(artist.getString("videoOwnerChannelTitle")),
+                                                                Link(
+                                                                    "https://www.youtube.com/channel/${artist.getString(
+                                                                        "videoOwnerChannelId",
+                                                                    )}",
+                                                                ),
+                                                            )
+                                                        },
+                                                    ),
+                                                ),
+                                                Name(title),
+                                                Link(videoLink),
+                                                Playability(isPlayable),
+                                            )
+                                        if (limit != 0) {
+                                            if (listItems.size < limit) {
+                                                listItems.add(track)
+                                            } else {
+                                                println("Limit reached!")
+                                                break
+                                            }
+                                        } else {
+                                            listItems.add(track)
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                        totalItems -= 1
+                                    }
+                                }
+                                return@withContext
+                            }
+
+                            HttpURLConnection.HTTP_FORBIDDEN -> {
+                                if (key == apiKey1) {
+                                    key = apiKey2
+                                } else {
+                                    println("HTTP ERROR! CODE: ${result.code}")
+                                    return@withContext
+                                }
+                            }
+
+                            else -> {
+                                println("HTTP ERROR! CODE: ${result.code}")
+                                return@withContext
+                            }
+                        }
+                    }
+                }
+            }
+            return TrackList(listItems)
+        }
+
+        var trackList = TrackList()
+        var key = apiKey1
+        withContext(IO) {
+            while (true) {
+                val response = sendRequest(part = "id", apiKey = key)
+                when (response.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val data = JSONObject(response.data.data)
+                            trackList = parseItems(data)
+                            return@withContext
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            this.cancel("Error! Broken JSON!")
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            key = apiKey2
+                        } else {
+                            println("HTTP ERROR! CODE: ${response.code}")
+                            return@withContext
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${response.code}")
+                        return@withContext
+                    }
+                }
+            }
+        }
+        return trackList
+    }
+
+    /**
+     * Fetch a channel's playlists from YouTube
+     * @param channelLink link to a YouTube channel
+     * @return returns a list of the channel's playlists.
+     */
+    private suspend fun fetchChannelPlaylists(channelLink: Link): Playlists {
+        fun fetchPlaylistsData(
+            apiKey: String = apiKey1,
+            pageToken: String = "",
+        ): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/playlists")
+            linkBuilder.append("?channelId=${channelLink.getId(this)}")
+            linkBuilder.append("&part=snippet%2Cstatus&maxResults=50")
+            linkBuilder.append("&key=$apiKey")
+            if (pageToken.isNotEmpty()) {
+                linkBuilder.append("&pageToken=$pageToken")
+            }
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        suspend fun parsePlaylistsData(playlistsData: JSONObject): List<Playlist> {
+            val playlists = ArrayList<Playlist>()
+            var items = playlistsData.getJSONArray("items")
+            var key = apiKey1
+            while (playlists.size < playlistsData.getJSONObject("pageInfo").getInt("totalResults")) {
+                if (items.isEmpty && playlistsData.has("nextPageToken")) {
+                    val pageToken = playlistsData.getString("nextPageToken")
+                    items =
+                        withContext(IO) {
+                            lateinit var newItems: JSONObject
+                            val newPageData = fetchPlaylistsData(key, pageToken)
+                            when (newPageData.code.code) {
+                                HttpURLConnection.HTTP_OK -> {
+                                    try {
+                                        val pageJSON = JSONObject(newPageData.data.data)
+                                        newItems = pageJSON
+                                    } catch (e: JSONException) {
+                                        e.printStackTrace()
+                                        this.cancel("Error! JSON Broken!")
+                                    }
+                                }
+
+                                HttpURLConnection.HTTP_FORBIDDEN -> {
+                                    if (key == apiKey1) {
+                                        key = apiKey2
+                                    } else {
+                                        println("HTTP ERROR! CODE: ${newPageData.code}")
+                                    }
+                                }
+
+                                else -> {
+                                    println("HTTP ERROR! CODE: ${newPageData.code}")
+                                }
+                            }
+                            newItems.getJSONArray("items")
+                        }
+                }
+                playlists.addAll(
+                    items.map {
+                        it as JSONObject
+                        val snippet = it.getJSONObject("snippet")
+                        Playlist(
+                            Name(snippet.getString("title")),
+                            User(Name(snippet.getString("channelTitle"))),
+                            Description(snippet.getString("description")),
+                            publicity = Publicity(it.getJSONObject("status").getString("privacyStatus") == "public"),
+                            link = Link("https://www.youtube.com/playlist?list=${it.getString("id")}"),
+                        )
+                    },
+                )
+            }
+            return playlists
+        }
+
+        var key = apiKey1
+        return withContext(IO) {
+            val lists = ArrayList<Playlist>()
+            while (true) {
+                val playlistsData = fetchPlaylistsData(key)
+                when (playlistsData.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val playlistsJSON = JSONObject(playlistsData.data.data)
+                            lists.addAll(parsePlaylistsData(playlistsJSON))
+                            break
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            this.cancel("Error! JSON Broken!")
+                            break
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            key = apiKey2
+                        } else {
+                            println("HTTP ERROR! CODE: ${playlistsData.code}")
+                            break
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${playlistsData.code}")
+                        break
+                    }
+                }
+            }
+            Playlists(lists)
+        }
+    }
+
+    /**
+     * Fetch a channel's data on YouTube
+     * @param link a YouTube channel's link
+     * @return returns the channel's data as a User data class
+     */
+    suspend fun fetchChannel(link: Link): User {
+        fun fetchChannelData(apiKey: String = apiKey1): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/channels")
+            linkBuilder.append("?id=${link.getId(this)}")
+            linkBuilder.append("&part=snippet%2Cstatistics")
+            linkBuilder.append("&key=$apiKey")
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        var key = apiKey1
+        return withContext(IO) {
+            var channel = User()
+            while (true) {
+                val channelData = fetchChannelData(key)
+                when (channelData.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val channelJSON = JSONObject(channelData.data.data).getJSONArray("items").first()
+                            channelJSON as JSONObject
+                            channel =
+                                User(
+                                    Name(channelJSON.getJSONObject("snippet").getString("title")),
+                                    Name(channelJSON.getString("id")),
+                                    Description(channelJSON.getJSONObject("snippet").getString("description")),
+                                    Followers(channelJSON.getJSONObject("statistics").getLong("subscriberCount")),
+                                    fetchChannelPlaylists(link),
+                                    link,
+                                )
+                            break
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                            this.cancel("Error! JSON Broken!")
+                            break
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            key = apiKey2
+                        } else {
+                            println("HTTP ERROR! CODE: ${channelData.code.code}")
+                            break
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${channelData.code.code}")
+                        break
+                    }
+                }
+            }
+            channel
+        }
+    }
+
+    override suspend fun fetchUser(userLink: Link): User {
+        return fetchChannel(userLink)
+    }
+
+    /**
+     * Search on YouTube for a video/track or a playlist
+     * @param searchType can be "track", "video", "playlist" or "channel"
+     * @param searchQuery search keywords
+     * @param resultLimit limit how many results are retrieved.
+     * @param encodeQuery whether to URL encode the given searchQuery
+     * @return returns results from the search
+     */
+    override suspend fun search(
+        searchType: SearchType,
+        searchQuery: SearchQuery,
+        resultLimit: Int,
+        encodeQuery: Boolean,
+    ): SearchResults {
+        fun searchData(
+            apiKey: String = apiKey1,
+            limit: Int = resultLimit,
+            pageToken: String = "",
+            link: Link = Link(),
+        ): Response {
+            val linkBuilder = StringBuilder()
+            if (link.isNotEmpty()) {
+                linkBuilder.append("$link".substringBefore("&key="))
+                linkBuilder.append("&key=$apiKey")
+            } else {
+                linkBuilder.append("$apiUrl/search?")
+                linkBuilder.append("q=${if (encodeQuery) encode(searchQuery.query) else searchQuery.query}")
+                linkBuilder.append("&type=${searchType.type.replace("track", "video")}")
+                linkBuilder.append("&maxResults=$limit")
+                linkBuilder.append("&part=snippet")
+                if (pageToken.isNotEmpty()) {
+                    linkBuilder.append("&pageToken=$pageToken")
+                }
+                linkBuilder.append("&key=$apiKey")
+            }
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        val searchResults = ArrayList<SearchResult>()
+        println("Searching for \"$searchQuery\" on YouTube...")
+        var key = apiKey1
+        withContext(IO) {
+            // YouTube allows a maximum of 50 results, so we have to do searches in smaller chunks in case the user wants more than 50 results
+            val maxResults = 50
+            var searchData = searchData(key, if (resultLimit > maxResults) maxResults else resultLimit)
+            while (true) {
+                when (searchData.code.code) {
+                    HttpURLConnection.HTTP_OK -> {
+                        try {
+                            val responseData = JSONObject(searchData.data.data)
+                            val results = responseData.getJSONArray("items")
+                            for (resultData in results) {
+                                resultData as JSONObject
+
+                                when (val type = resultData.getJSONObject("id").getString("kind").substringAfter("#")) {
+                                    "video" -> {
+                                        val videoUploader =
+                                            decode(resultData.getJSONObject("snippet").getString("channelTitle"))
+                                        val videoTitle = decode(resultData.getJSONObject("snippet").getString("title"))
+                                        val videoId = resultData.getJSONObject("id").getString("videoId")
+                                        val videoLink = Link("https://youtu.be/$videoId")
+
+                                        if (searchType.type.contains("query|track|$type".toRegex())) {
+                                            searchResults.add(
+                                                SearchResult(
+                                                    Track(
+                                                        artists =
+                                                            Artists(
+                                                                listOf(Artist(Name(videoUploader))),
+                                                            ),
+                                                        title = Name(videoTitle),
+                                                        link = videoLink,
+                                                    ),
+                                                    videoLink,
+                                                ),
+                                            )
+                                        }
+                                    }
+
+                                    "playlist" -> {
+                                        val listTitle = decode(resultData.getJSONObject("snippet").getString("title"))
+                                        val channelId = resultData.getJSONObject("snippet").getString("channelId")
+                                        val channelLink = Link("https://www.youtube.com/channel/$channelId")
+                                        val listCreator =
+                                            User(
+                                                Name(resultData.getJSONObject("snippet").getString("channelTitle")),
+                                                userName = Name(channelId),
+                                                link = channelLink,
+                                            )
+
+                                        val listLink =
+                                            Link(
+                                                "https://www.youtube.com/playlist?list=${
+                                                    resultData.getJSONObject("id")
+                                                        .getString("playlistId")
+                                                }",
+                                            )
+                                        val listDescription = Description(resultData.getJSONObject("snippet").getString("description"))
+                                        if (searchType.type == type) {
+                                            searchResults.add(
+                                                SearchResult(
+                                                    Playlist(
+                                                        Name(listTitle),
+                                                        listCreator,
+                                                        listDescription,
+                                                        link = listLink,
+                                                    ),
+                                                    listLink,
+                                                ),
+                                            )
+                                        }
+                                    }
+
+                                    "channel" -> {
+                                        val channelTitle =
+                                            decode(resultData.getJSONObject("snippet").getString("title"))
+                                        val channelId = resultData.getJSONObject("snippet").getString("channelId")
+                                        val channelLink = Link("https://www.youtube.com/channel/$channelId")
+                                        val channelDescription = Description(resultData.getJSONObject("snippet").getString("description"))
+                                        if (searchType.type == type) {
+                                            searchResults.add(
+                                                SearchResult(
+                                                    User(
+                                                        Name(channelTitle),
+                                                        Name(channelId),
+                                                        channelDescription,
+                                                        link = channelLink,
+                                                    ),
+                                                    channelLink,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            if (searchResults.size < resultLimit && responseData.has("nextPageToken")) {
+                                searchData =
+                                    searchData(
+                                        key,
+                                        resultLimit - searchResults.size,
+                                        responseData.getString("nextPageToken"),
+                                    )
+                            } else {
+                                return@withContext
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            this.cancel("Error! JSON Broken!")
+                            return@withContext
+                        }
+                    }
+
+                    HttpURLConnection.HTTP_FORBIDDEN -> {
+                        if (key == apiKey1) {
+                            key = apiKey2
+                            searchData = searchData(key, link = searchData.link)
+                        } else {
+                            println("HTTP ERROR! CODE: ${searchData.code}")
+                            return@withContext
+                        }
+                    }
+
+                    else -> {
+                        println("HTTP ERROR! CODE: ${searchData.code}")
+                        return@withContext
+                    }
+                }
+            }
+        }
+        return SearchResults(searchResults)
+    }
+
+    /**
+     * Resolve the type of given YouTube link
+     * @param link link to be resolved
+     * @return returns a String containing the type of link. Possible values: video, channel, playlist
+     */
+    override suspend fun resolveType(link: Link): LinkType {
+        fun fetchData(apiKey: String = apiKey1): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/search?")
+            linkBuilder.append("q=$link")
+            linkBuilder.append("&part=snippet")
+            linkBuilder.append("&key=$apiKey")
+            return sendHttpRequest(Link(linkBuilder.toString()))
+        }
+
+        var key = apiKey1
+        return when {
+            "$link".contains("\\S+/playlist\\?\\S+".toRegex()) -> LinkType.PLAYLIST
+            "$link".contains("\\S+/c(hannel)?/\\S+".toRegex()) -> LinkType.CHANNEL
+            "$link".contains("(youtu\\.be|\\S+((\\w*\\?)?\\S*(vi?))[=/]\\S+)".toRegex()) -> LinkType.VIDEO
+            "$link".contains("\\S+/results\\?\\S+".toRegex()) -> LinkType.QUERY
+            else ->
+                withContext(IO) {
+                    // Attempt to resolve the link type via YouTube API
+                    var linkType = LinkType.OTHER
+                    while (true) {
+                        val linkData = fetchData(key)
+                        when (linkData.code.code) {
+                            HttpURLConnection.HTTP_OK -> {
+                                try {
+                                    val dataJSON = JSONObject(linkData.data.data)
+                                    val results = dataJSON.getJSONArray("items")
+                                    if (results.length() > 0) {
+                                        linkType =
+                                            dataJSON.getJSONArray("items").first { itemData ->
+                                                itemData as JSONObject
+                                                itemData.getJSONObject("id").getString("kind").substringAfter("#").let {
+                                                    itemData.getJSONObject("id").getString("${it}Id")
+                                                } == link.getId(this@YouTube)
+                                            }.let { itemData ->
+                                                itemData as JSONObject
+                                                LinkType.valueOf(
+                                                    itemData.getJSONObject("id").getString("kind").substringAfter("#")
+                                                        .uppercase(),
+                                                )
+                                            }
+                                    }
+                                    break
+                                } catch (e: JSONException) {
+                                    e.printStackTrace()
+                                    this.cancel("Error! Broken JSON!")
+                                }
+                            }
+
+                            HttpURLConnection.HTTP_FORBIDDEN -> {
+                                if (key == apiKey1) {
+                                    key = apiKey2
+                                } else {
+                                    println("HTTP ERROR! CODE: ${linkData.code}")
+                                    break
+                                }
+                            }
+
+                            else -> {
+                                println("HTTP ERROR! CODE: ${linkData.code}")
+                                break
+                            }
+                        }
+                    }
+                    linkType
+                }
+        }
+    }
+
+    suspend fun resolveChannelId(channelLink: Link): String {
+        val channelName = "$channelLink".substringAfterLast("/")
+
+        fun fetchData(apiKey: String = apiKey1): Response {
+            val linkBuilder = StringBuilder()
+            linkBuilder.append("$apiUrl/search?")
+            linkBuilder.append("q=$channelName")
+            linkBuilder.append("&part=snippet")
+            linkBuilder.append("&type=channel")
+            linkBuilder.append("&key=$apiKey")
+            return sendHttpRequest(Link(linkBuilder.toString()), RequestMethod.GET)
+        }
+
+        return if ("$channelLink".contains("\\S+/channel/\\S+".toRegex())) {
+            "$channelLink".substringAfterLast("/")
+        } else {
+            val idJob = Job()
+            var key = apiKey1
+            withContext(IO) {
+                var id = ""
+                while (true) {
+                    val channelData = fetchData(key)
+                    when (channelData.code.code) {
+                        HttpURLConnection.HTTP_OK -> {
+                            try {
+                                val resultsJSON = JSONObject(channelData.data.data)
+                                id =
+                                    resultsJSON.getJSONArray("items").first {
+                                        it as JSONObject
+                                        it.getJSONObject("id").getString("kind").substringAfter("#") == "channel" &&
+                                            it.getJSONObject("snippet").getString("title")
+                                                .replace(" ", "") == "$channelLink".substringAfterLast("/")
+                                    }.let {
+                                        it as JSONObject
+                                        it.getJSONObject("id").getString("channelId")
+                                    }
+                                break
+                            } catch (e: JSONException) {
+                                e.printStackTrace()
+                                this.cancel("Error! JSON Broken!")
+                                break
+                            }
+                        }
+
+                        HttpURLConnection.HTTP_FORBIDDEN -> {
+                            if (key == apiKey1) {
+                                key = apiKey2
+                            } else {
+                                println("HTTP ERROR! CODE: ${channelData.code.code}")
+                                break
+                            }
+                        }
+
+                        else -> {
+                            println("HTTP ERROR! CODE: ${channelData.code.code}")
+                            break
+                        }
+                    }
+                }
+                idJob.complete()
+                id
+            }
+        }
+    }
+}

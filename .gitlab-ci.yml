@@ -1,0 +1,22 @@
+image: "ubuntu:22.04"
+
+stages:
+  - build
+
+before_script:
+  - apt update
+  - apt install -y kotlin openjdk-17-jdk openjfx zip
+
+buildTS3MusicBot:
+  stage: build
+  script:
+    - sh gradlew assemble
+    - sh gradlew test --tests "BandcampTest"
+    - sh gradlew test --tests "CommandRunnerTest"
+    # - sh gradlew test --tests "SoundCloudTest" #Soundcloud seems to be blocking requests coming from ci,
+    - sh gradlew test --tests "SpotifyTest"
+    - sh gradlew test --tests "YouTubeTest"
+    - sh build.sh
+  artifacts:
+    paths:
+      - out/artifacts/ts3_musicbot/ts3-musicbot.jar

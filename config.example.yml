@@ -1,0 +1,27 @@
+server:
+  address: "YOUR_TS_SERVER_IP"
+  port: 9987
+  password: ""
+bot:
+  nickname: "TS3 MusicBot"
+  default_channel_id: 0
+  reconnect: true
+  auto_join: true
+  channel_name: "Music & Chill"
+  channel_password: ""
+audio:
+  volume: 50
+  max_queue_size: 100
+  buffer_ms: 5000
+  opus_passthrough: true
+  stream_only: true
+limits:
+  max_playlist_tracks: 25
+  max_song_length_minutes: 15
+  idle_disconnect_minutes: 10
+performance:
+  worker_threads: 1
+  async_loader_threads: 1
+  provider_threads: 1
+  gc_optimized: true
+  low_memory_mode: true

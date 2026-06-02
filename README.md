@@ -57,12 +57,16 @@ server:
   password: ""               # TS3 Server password (if any)
 bot:
   nickname: "MusicBot"       # Display nickname in channel
-  default_channel_id: 0      # Channel ID to join (set 0 to use name-based join)
+  default_channel_id: 0      # (Optional) Legacy numeric ID fallback if channel_name is empty
   reconnect: true
   auto_join: true
-  channel_name: "Music & Chill" # Channel path (e.g. "Lobby/Music Room")
+  channel_name: "Music & Chill" # Channel name, path (e.g., "Lobby/Chill"), or numeric ID (e.g., "53")
   channel_password: ""       # Channel password (if any)
 ```
+
+> [!NOTE]
+> **Channel Configuration**: You can input either a friendly name path (e.g. `Lobby/Music Room`) or a direct numeric channel ID (e.g. `53`) in `channel_name`. The bot automatically detects numeric IDs and resolves them. `default_channel_id` is a fallback option that is only used if `channel_name` is left blank.
+
 
 #### `providers.yml`
 Input your credentials for Spotify, SoundCloud, and YouTube API:

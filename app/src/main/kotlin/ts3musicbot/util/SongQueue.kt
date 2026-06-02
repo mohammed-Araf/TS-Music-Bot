@@ -96,6 +96,10 @@ class SongQueue(
             override fun onTrackStart(player: AudioPlayer, track: AudioTrack) {
                 onLavaTrackStart()
             }
+            override fun onTrackException(player: AudioPlayer, track: AudioTrack, exception: FriendlyException) {
+                println("[LAVAPLAYER] Error playing track ${track.info.title}: ${exception.message}")
+                exception.printStackTrace()
+            }
         })
     }
 

@@ -25,7 +25,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0")
     implementation("com.github.bettehem:ts3j:1.0.21")
     implementation("dev.arbjerg:lavaplayer:2.2.6")
-    implementation("dev.lavalink.youtube:youtube-plugin:1.11.4")
+    implementation("dev.lavalink.youtube:youtube-plugin:1.18.0")
     implementation("org.yaml:snakeyaml:2.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

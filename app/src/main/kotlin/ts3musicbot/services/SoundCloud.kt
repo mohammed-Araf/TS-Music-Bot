@@ -49,7 +49,15 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 class SoundCloud : Service(ServiceType.SOUNDCLOUD) {
-    var clientId = "gxPRNsEq7CDD7Wvem4iymWOq3YfU7KS8"
+    companion object {
+        private val lock = Any()
+        var staticClientId = "gxPRNsEq7CDD7Wvem4iymWOq3YfU7KS8"
+    }
+
+    var clientId: String
+        get() = synchronized(lock) { staticClientId }
+        set(value) { synchronized(lock) { staticClientId = value } }
+
     private val api2URI = URI("https://api-v2.soundcloud.com")
     val apiURI = URI("https://api.soundcloud.com")
 
@@ -74,19 +82,20 @@ class SoundCloud : Service(ServiceType.SOUNDCLOUD) {
         val response = sendHttpRequest(Link("https://soundcloud.com"))
         when (val code = response.code.code) {
             HttpURLConnection.HTTP_OK -> {
-                val lines = response.data.data
-                    .lines()
-                    .filter { it.contains("^<script crossorigin src=\"https://\\S+\\.js\"></script>".toRegex()) }
-                for (line in lines) {
-                    sendHttpRequest(Link(line.substringAfter('"').substringBefore('"')))
-                        .data.data
-                        .let { data ->
-                            if (data.contains("client_id(=[0-9A-z-_]{5,}|:\"[0-9A-z-_]{5,}\")".toRegex())) {
-                                val idLine = data.lines().first { it.contains("client_id(=[0-9A-z-_]{5,}|:\"[0-9A-z-_]{5,}\")".toRegex()) }
-                                val id = idLine.replace("^.*[^_]client_id(=|:\")".toRegex(), "").replace("(&|\"?\\),|\").*$".toRegex(), "")
-                                synchronized(clientId) { clientId = id }
-                            }
+                val jsMatcher = java.util.regex.Pattern.compile("<script[^>]+src=\"(https://[^\"]+\\.js)\"").matcher(response.data.data)
+                while (jsMatcher.find()) {
+                    val jsUrl = jsMatcher.group(1)
+                    val jsResponse = sendHttpRequest(Link(jsUrl))
+                    if (jsResponse.code.code == HttpURLConnection.HTTP_OK) {
+                        val jsData = jsResponse.data.data
+                        val idMatcher = java.util.regex.Pattern.compile("client_id(?:=|:\")([0-9a-zA-Z-_]{32})\"?").matcher(jsData)
+                        if (idMatcher.find()) {
+                            val id = idMatcher.group(1)
+                            synchronized(lock) { staticClientId = id }
+                            println("[SOUNDCLOUD] Scraped new client_id: $id")
+                            break
                         }
+                    }
                 }
             }
             else -> println("HTTP ERROR $code! Couldn't update the client_id!")

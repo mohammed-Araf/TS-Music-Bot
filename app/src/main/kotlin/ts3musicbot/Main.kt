@@ -58,8 +58,14 @@ class Main : ChatUpdateListener, CommandListener {
 
             // SoundCloud Validation (always enabled if mode is not off)
             if (BotSettings.providers.soundcloud.mode != "off") {
-                println("[OK] SoundCloud streaming initialized.")
-                activeProviders++
+                try {
+                    val soundCloud = ts3musicbot.services.SoundCloud()
+                    soundCloud.updateClientId()
+                    println("[OK] SoundCloud streaming initialized. Scraped Client ID: ${soundCloud.clientId}")
+                    activeProviders++
+                } catch (e: Exception) {
+                    println("[WARN] SoundCloud initialization failed: ${e.message}")
+                }
             }
 
             // YouTube Validation

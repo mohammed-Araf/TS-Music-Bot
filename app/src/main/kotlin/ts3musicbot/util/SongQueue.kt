@@ -308,13 +308,15 @@ class SongQueue(
         var audioTrack: AudioTrack? = null
 
         if (track.link.serviceType() == ServiceType.SPOTIFY) {
-            val query = "${track.artists.toShortString()} - ${track.title.name}"
+            val primaryArtist = track.artists.artists.firstOrNull()?.name?.name ?: ""
+            val query = if (primaryArtist.isNotEmpty()) "$primaryArtist ${track.title.name}" else track.title.name
             println("[LAVAPLAYER] Resolving Spotify track: $query")
             audioTrack = searchAndLoad(query)
         } else {
             audioTrack = loadDirect(link)
             if (audioTrack == null) {
-                val query = "${track.artists.toShortString()} - ${track.title.name}"
+                val primaryArtist = track.artists.artists.firstOrNull()?.name?.name ?: ""
+                val query = if (primaryArtist.isNotEmpty()) "$primaryArtist ${track.title.name}" else track.title.name
                 println("[LAVAPLAYER] Loading direct failed; searching: $query")
                 audioTrack = searchAndLoad(query)
             }

@@ -64,9 +64,14 @@ class SongQueue(
         // 2. Register SoundCloud source manager
         playerManager.registerSourceManager(com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager.createDefault())
 
-        // 3. Register YouTube source manager (youtube-plugin)
         try {
-            val youtubePlugin = dev.lavalink.youtube.YoutubeAudioSourceManager()
+            val youtubePlugin = dev.lavalink.youtube.YoutubeAudioSourceManager(
+                dev.lavalink.youtube.clients.Music(),
+                dev.lavalink.youtube.clients.AndroidVr(),
+                dev.lavalink.youtube.clients.Web(),
+                dev.lavalink.youtube.clients.WebEmbedded(),
+                dev.lavalink.youtube.clients.Tv()
+            )
             
             // Configure PO Token if provided
             val potToken = BotSettings.providers.youtube.potToken

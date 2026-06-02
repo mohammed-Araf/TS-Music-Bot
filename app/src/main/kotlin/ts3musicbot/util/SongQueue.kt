@@ -67,6 +67,38 @@ class SongQueue(
         // 3. Register YouTube source manager (youtube-plugin)
         try {
             val youtubePlugin = dev.lavalink.youtube.YoutubeAudioSourceManager()
+            
+            // Configure PO Token if provided
+            val potToken = BotSettings.providers.youtube.potToken
+            val visitorData = BotSettings.providers.youtube.visitorData
+            if (potToken.isNotEmpty() && visitorData.isNotEmpty()) {
+                println("[LAVAPLAYER] Configuring YouTube plugin with PO Token and Visitor Data...")
+                try {
+                    dev.lavalink.youtube.clients.Web.setPoTokenAndVisitorData(potToken, visitorData)
+                    dev.lavalink.youtube.clients.WebEmbedded.setPoTokenAndVisitorData(potToken, visitorData)
+                    println("[LAVAPLAYER] PO Token and Visitor Data set successfully.")
+                } catch (e: Exception) {
+                    println("[LAVAPLAYER] Failed to set PO Token / Visitor Data: ${e.message}")
+                }
+            }
+            
+            // Configure OAuth Refresh Token if provided
+            val oauthToken = BotSettings.providers.youtube.oauthRefreshToken
+            if (oauthToken.isNotEmpty()) {
+                try {
+                    if (oauthToken.equals("init", ignoreCase = true)) {
+                        println("[LAVAPLAYER] Configuring YouTube plugin: Initiating OAuth device flow...")
+                        youtubePlugin.useOauth2(null, false)
+                    } else {
+                        println("[LAVAPLAYER] Configuring YouTube plugin with OAuth Refresh Token...")
+                        youtubePlugin.useOauth2(oauthToken, true)
+                        println("[LAVAPLAYER] OAuth Refresh Token configured successfully.")
+                    }
+                } catch (e: Exception) {
+                    println("[LAVAPLAYER] Failed to configure OAuth: ${e.message}")
+                }
+            }
+
             playerManager.registerSourceManager(youtubePlugin)
             println("[LAVAPLAYER] Registered YouTube and SoundCloud source managers successfully.")
         } catch (e: Exception) {

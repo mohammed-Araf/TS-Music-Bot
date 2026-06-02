@@ -71,6 +71,9 @@ class SoundCloudProviderConfig {
 class YouTubeProviderConfig {
     var mode: String = "auto"
     var apiKey: String = ""
+    var potToken: String = ""
+    var visitorData: String = ""
+    var oauthRefreshToken: String = ""
 }
 
 class SearchConfig {
@@ -233,6 +236,9 @@ class BotSettings(
                         (map["youtube"] as? Map<*, *>)?.let { y ->
                             providers.youtube.mode = y["mode"] as? String ?: providers.youtube.mode
                             providers.youtube.apiKey = y["api_key"] as? String ?: providers.youtube.apiKey
+                            providers.youtube.potToken = y["pot_token"] as? String ?: providers.youtube.potToken
+                            providers.youtube.visitorData = y["visitor_data"] as? String ?: providers.youtube.visitorData
+                            providers.youtube.oauthRefreshToken = y["oauth_refresh_token"] as? String ?: providers.youtube.oauthRefreshToken
                         }
                         (map["search"] as? Map<*, *>)?.let { s ->
                             providers.search.providerOrder = (s["provider_order"] as? List<*>)?.map { it.toString() } ?: providers.search.providerOrder

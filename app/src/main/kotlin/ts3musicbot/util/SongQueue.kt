@@ -55,9 +55,10 @@ class SongQueue(
     private var consecutiveYtFailures = 0
 
     init {
-        // 1. Configure LavaPlayer output format for standard Little-Endian 16-bit PCM
-        playerManager.configuration.setOutputFormat(StandardAudioDataFormats.COMMON_PCM_S16_LE)
+        // 1. Configure LavaPlayer output format for standard Little-Endian 16-bit PCM (48kHz for TeamSpeak)
+        playerManager.configuration.setOutputFormat(StandardAudioDataFormats.DISCORD_PCM_S16_LE)
         playerManager.setFrameBufferDuration(BotSettings.main.audio.bufferMs)
+
 
         // 2. Register SoundCloud source manager
         playerManager.registerSourceManager(com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager.createDefault())

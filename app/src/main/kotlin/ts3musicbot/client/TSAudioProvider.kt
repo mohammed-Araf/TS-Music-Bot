@@ -11,15 +11,21 @@ import java.nio.ByteOrder
 
 class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
     // Allocate direct buffers as required by the native JNI Opus library
-    private val pcmBuffer = ByteBuffer.allocateDirect(StandardAudioDataFormats.COMMON_PCM_S16_LE.maximumChunkSize()).order(ByteOrder.nativeOrder())
+    private val pcmBuffer = ByteBuffer.allocateDirect(StandardAudioDataFormats.DISCORD_PCM_S16_LE.maximumChunkSize()).order(ByteOrder.nativeOrder())
     private val frame = MutableAudioFrame()
     private val opusEncoder = OpusEncoder(48000, 2, 10)
     private val opusBuffer = ByteBuffer.allocateDirect(2048)
     private var isMuted = false
 
+    private var provideCount = 0
+    private var successCount = 0
+    private var emptyCount = 0
+
     init {
         frame.setBuffer(pcmBuffer)
+        frame.setFormat(StandardAudioDataFormats.DISCORD_PCM_S16_LE)
     }
+
 
     override fun getCodec(): CodecType {
         return CodecType.OPUS_MUSIC
@@ -38,10 +44,16 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
     }
 
     override fun provide(): ByteArray? {
+        provideCount++
         pcmBuffer.clear()
         if (audioPlayer.provide(frame)) {
             val length = frame.dataLength
             if (length > 0) {
+                successCount++
+                if (provideCount % 100 == 0) {
+                    println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount")
+                }
+                
                 pcmBuffer.position(0)
                 pcmBuffer.limit(length)
                 
@@ -57,7 +69,14 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
                     opusBuffer.get(opusData)
                     return opusData
                 }
+            } else {
+                emptyCount++
             }
+        } else {
+            emptyCount++
+        }
+        if (provideCount % 100 == 0) {
+            println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount")
         }
         return ByteArray(0)
     }

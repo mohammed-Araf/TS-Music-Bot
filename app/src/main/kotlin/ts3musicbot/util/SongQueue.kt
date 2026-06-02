@@ -338,11 +338,27 @@ class SongQueue(
     }
 
     private suspend fun searchAndLoad(query: String): AudioTrack? {
-        // 1. Try SoundCloud Search
+        // 1. Try custom SoundCloud search first using resolved client ID
+        try {
+            println("[LAVAPLAYER] Searching SoundCloud for: $query")
+            val results = soundCloud.search(ts3musicbot.util.SearchType("track"), ts3musicbot.util.SearchQuery(query))
+            val firstResult = results.results.firstOrNull()
+            if (firstResult != null) {
+                println("[LAVAPLAYER] Found SoundCloud track: ${firstResult.result.name.name} (${firstResult.link.link})")
+                val track = loadDirect(firstResult.link.link)
+                if (track != null) return track
+            } else {
+                println("[LAVAPLAYER] SoundCloud search returned no results for: $query")
+            }
+        } catch (e: Exception) {
+            println("[LAVAPLAYER] Custom SoundCloud search failed: ${e.message}")
+        }
+
+        // 2. Try LavaPlayer's built-in SoundCloud Search
         val scTrack = loadDirect("scsearch:$query")
         if (scTrack != null) return scTrack
 
-        // 2. Try YouTube Search (if not disabled)
+        // 3. Try YouTube Search (if not disabled)
         if (!youtubeDisabled) {
             val ytTrack = loadDirect("ytsearch:$query")
             if (ytTrack != null) {

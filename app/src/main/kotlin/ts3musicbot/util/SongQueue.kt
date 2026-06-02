@@ -50,6 +50,7 @@ class SongQueue(
     var currentTrack: Track = Track()
     var isLooping = false
     var isQueueLooping = false
+    private var isSkipping = false
 
     private var youtubeDisabled = false
     private var consecutiveYtFailures = 0
@@ -87,6 +88,7 @@ class SongQueue(
         // Add LavaPlayer listener
         audioPlayer.addListener(object : AudioEventAdapter() {
             override fun onTrackEnd(player: AudioPlayer, track: AudioTrack, endReason: AudioTrackEndReason) {
+                if (isSkipping) return  // skip handles playNext() explicitly
                 if (endReason.mayStartNext) {
                     onLavaTrackEnd()
                 }
@@ -210,8 +212,11 @@ class SongQueue(
     }
 
     fun skipSong() {
+        isSkipping = true
         audioPlayer.stopTrack()
+        playStateListener.onTrackEnded("lavaplayer", currentTrack)
         playNext()
+        isSkipping = false
     }
 
     fun startQueue() {

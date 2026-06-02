@@ -13,8 +13,9 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
     // Allocate direct buffers as required by the native JNI Opus library
     private val pcmBuffer = ByteBuffer.allocateDirect(StandardAudioDataFormats.DISCORD_PCM_S16_LE.maximumChunkSize()).order(ByteOrder.nativeOrder())
     private val frame = MutableAudioFrame()
-    private val opusEncoder = OpusEncoder(48000, 2, 10)
+    private val opusEncoder = OpusEncoder(48000, 2, 2049)
     private val opusBuffer = ByteBuffer.allocateDirect(2048)
+
     private var isMuted = false
 
     private var provideCount = 0
@@ -43,6 +44,8 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
         return audioPlayer.playingTrack != null && !isMuted()
     }
 
+    private var lastTickTime = 0L
+
     override fun provide(): ByteArray? {
         provideCount++
         pcmBuffer.clear()
@@ -51,7 +54,10 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
             if (length > 0) {
                 successCount++
                 if (provideCount % 100 == 0) {
-                    println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount")
+                    val now = System.currentTimeMillis()
+                    val diff = if (lastTickTime == 0L) 0 else (now - lastTickTime)
+                    lastTickTime = now
+                    println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount | Time for 100 ticks: ${diff}ms")
                 }
                 
                 pcmBuffer.position(0)
@@ -76,9 +82,13 @@ class TSAudioProvider(private val audioPlayer: AudioPlayer) : Microphone {
             emptyCount++
         }
         if (provideCount % 100 == 0) {
-            println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount")
+            val now = System.currentTimeMillis()
+            val diff = if (lastTickTime == 0L) 0 else (now - lastTickTime)
+            lastTickTime = now
+            println("[TSAudioProvider] Ticks: $provideCount | Success: $successCount | Empty: $emptyCount | Time for 100 ticks: ${diff}ms")
         }
         return ByteArray(0)
     }
 }
+
 

@@ -244,6 +244,7 @@ class SongQueue(
             if (songQueue.isNotEmpty()) {
                 val nextTrack = songQueue.removeAt(0)
                 currentTrack = nextTrack
+                queueState = State.QUEUE_PLAYING
                 CoroutineScope(Dispatchers.Default).launch {
                     playTrack(nextTrack)
                 }

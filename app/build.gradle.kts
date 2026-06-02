@@ -53,12 +53,6 @@ tasks.shadowJar {
     archiveBaseName.set("ts3-musicbot")
     archiveFileName.set("ts3-musicbot.jar")
     mergeServiceFiles()
-    minimize {
-        // Prevent JNA / JNI resources or dynamic dependencies of ts3j / lavaplayer from being minimized out
-        exclude(dependency("com.github.bettehem:ts3j:.*"))
-        exclude(dependency("dev.arbjerg:lavaplayer:.*"))
-        exclude(dependency("dev.lavalink.youtube:youtube-plugin:.*"))
-    }
     manifest {
         attributes(mapOf("Main-Class" to application.mainClass))
     }

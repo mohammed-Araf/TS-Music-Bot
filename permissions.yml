@@ -1,9 +1,7 @@
 permissions:
   enabled: true
   required_badges:
-    - "music_access"
-    - "vip"
-    - "admin"
+    - "50"
   cache_badges: true
   cache_ttl_seconds: 300
   deny_message: "You are not allowed to use music commands."

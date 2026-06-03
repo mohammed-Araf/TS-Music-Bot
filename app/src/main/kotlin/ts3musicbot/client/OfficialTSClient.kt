@@ -85,25 +85,18 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
      * @return returns the channel's id
      */
     private fun getChannelId(channelName: String): Int {
-        val numericId = channelName.toIntOrNull()
-        if (numericId != null) {
-            val channelList = getChannelList()
-            if (channelList.any { it.contains("cid=$numericId(\\s+|$)".toRegex()) }) {
-                return numericId
-            }
-        }
         val targetChannel = channelName.substringAfterLast("/")
         val channelList = getChannelList()
-        val channels =
-            if (channelList.any { it.contains("channel_name=${encode(targetChannel)}") }) {
-                channelList.filter { it.contains("channel_name=${encode(targetChannel)}") }
-            } else {
-                emptyList()
-            }
+
+        fun parseChannelName(channelLine: String): String {
+            return decode(channelLine.substringAfter("channel_name=").substringBefore(" "))
+        }
+
+        val channels = channelList.filter { parseChannelName(it) == targetChannel }
 
         var targetCid = 0
         channelLoop@ for (channelData in channels) {
-            fun getChannelId(): Int = channelData.substringAfter("cid=").substringBefore(' ').toInt()
+            fun getChannelIdVal(): Int = channelData.substringAfter("cid=").substringBefore(' ').toInt()
 
             val subChannels = channelName.split('/')
             val channelPath = ArrayList<String>()
@@ -112,22 +105,17 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
 
             var pid = channelData.substringAfter("pid=").substringBefore(" ")
             while (channelPath.isNotEmpty()) {
-                fun getChannelName(cid: String) =
-                    channelList.first { it.contains("cid=$cid(\\s+|$)".toRegex()) }
-                        .substringAfter("channel_name=").substringBefore(' ')
-
-                fun checkPid(
-                    pid: String,
-                    name: String,
-                ) = getChannelName(pid) == encode(name)
-                if (checkPid(pid, channelPath.first())) {
-                    pid = getChannelList().first { it.contains("cid=$pid(\\s+|$)".toRegex()) }.substringAfter("pid=").substringBefore(' ')
+                val parentLine = channelList.firstOrNull { it.contains("cid=$pid(\\s+|$)".toRegex()) }
+                    ?: continue@channelLoop
+                val parentName = parseChannelName(parentLine)
+                if (parentName == channelPath.first()) {
+                    pid = parentLine.substringAfter("pid=").substringBefore(' ')
                     channelPath.removeFirst()
                 } else {
                     continue@channelLoop
                 }
             }
-            targetCid = getChannelId()
+            targetCid = getChannelIdVal()
         }
         return targetCid
     }
@@ -154,21 +142,22 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             false
         } else {
             if (channelName != currentChannelName) {
-                if (channelPassword.isNotEmpty()) {
-                    clientQuery("disconnect")
-                    delay(500.milliseconds)
-                    clientQuery(
-                        "connect address=${botSettings.serverAddress} password=${encode(botSettings.serverPassword)} " +
-                            "nickname=${encode(botSettings.nickname)} " +
-                            "channel=${encode(channelName)} channel_pw=${encode(channelPassword)}",
-                    )
+                val channelId = getChannelId(channelName)
+                if (channelId == 0) {
+                    println("Failed to find channel ID for \"$channelName\"")
+                    updateChannelFile()
+                    false
                 } else {
-                    val channelId = getChannelId(channelName)
-                    clientQuery("clientmove cid=$channelId clid=${getCurrentUserId()}")
+                    if (channelPassword.isNotEmpty()) {
+                        clientQuery("clientmove cid=$channelId cpw=${encode(channelPassword)} clid=${getCurrentUserId()}")
+                    } else {
+                        clientQuery("clientmove cid=$channelId clid=${getCurrentUserId()}")
+                    }
+                    updateChannelFile()
+                    channelName == getCurrentChannelName()
                 }
-                updateChannelFile()
-                channelName == getCurrentChannelName()
             } else {
+                updateChannelFile()
                 true
             }
         }
@@ -200,6 +189,10 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
      * @return returns true if starting teamspeak is successful, false if requirements aren't met
      */
     suspend fun startTeamSpeak(): Boolean {
+        // Kill any existing TeamSpeak client processes to ensure a clean disconnect
+        println("Killing any existing TeamSpeak client instances...")
+        killTeamSpeak()
+
         botSettings.apiKey = botSettings.apiKey.ifEmpty { getApiKey() }
 
         if (botSettings.serverAddress.isNotEmpty()) {
@@ -216,12 +209,15 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
                 }
             }
 
+            println("Waiting 25 seconds before starting TeamSpeak client to allow old connection to disconnect...")
+            delay(25.seconds)
+
             // start teamspeak
             commandRunner.runCommand(
                 ignoreOutput = true,
                 command =
                     "tmux new -s ts3 -n ts3client -d; tmux send-keys -t ts3 '" +
-                    "xvfb-run -a teamspeak3 -nosingleinstance" +
+                    "DISPLAY=:99 teamspeak3" +
                         " \"" +
                         (if (botSettings.serverAddress.isNotEmpty()) "ts3server://${botSettings.serverAddress}" else "") +
                         "?port=${botSettings.serverPort}" +
@@ -239,6 +235,29 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
                                             Charsets.UTF_8.toString().replace("+", "%20"),
                                         )
                                     }
+                                }"
+                            } else {
+                                ""
+                            }
+                        ) +
+                        (
+                            if (botSettings.channelName.isNotEmpty()) {
+                                val formattedChannel = botSettings.channelName.replace("&", "\\&")
+                                "&channel=${
+                                    withContext(IO) {
+                                        URLEncoder.encode(formattedChannel, Charsets.UTF_8.toString())
+                                    }.replace("+", "%20")
+                                }"
+                            } else {
+                                ""
+                            }
+                        ) +
+                        (
+                            if (botSettings.channelPassword.isNotEmpty()) {
+                                "&channelpassword=${
+                                    withContext(IO) {
+                                        URLEncoder.encode(botSettings.channelPassword, Charsets.UTF_8.toString())
+                                    }.replace("+", "%20")
                                 }"
                             } else {
                                 ""
@@ -530,7 +549,7 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             val chatDir = File("${System.getProperty("user.home")}/.ts3client/chats")
             println("Looking in \"$chatDir\" for chat files.")
             if (chatDir.exists()) {
-                for (dir in chatDir.list() ?: return) {
+                for (dir in chatDir.list() ?: emptyArray()) {
                     println("Checking in $dir")
                     val serverFile = File("${System.getProperty("user.home")}/.ts3client/chats/$dir/server.html")
                     for (line in serverFile.readLines()) {
@@ -692,7 +711,7 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
     fun audioIsWorking(): Boolean {
         return runPactlCommand("list sink-inputs").any {
             it as JSONObject
-            it.getJSONObject("properties").getString("application.name").contains("TeamSpeak3?".toRegex())
+            it.getJSONObject("properties").optString("application.name", "").contains("TeamSpeak".toRegex(RegexOption.IGNORE_CASE))
         }
     }
 
@@ -808,17 +827,36 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             printOutput = false,
         )
 
-        if (audioIsWorking()) {
-            // Mute teamspeak output
+        var retries = 0
+        var tsSinkInputId = -1
+        var tsSourceOutputId = -1
+
+        while (retries < 20) {
             val sinkInputs = runPactlCommand("list sink-inputs")
-            val tsSinkInputId =
-                sinkInputs.first {
-                    it as JSONObject
-                    it.getJSONObject("properties").getString("application.name").contains("TeamSpeak3?".toRegex())
-                }.let {
-                    it as JSONObject
-                    it.getInt("index")
-                }
+            val sinkInput = sinkInputs.firstOrNull {
+                it as JSONObject
+                it.getJSONObject("properties").optString("application.name", "").contains("TeamSpeak".toRegex(RegexOption.IGNORE_CASE))
+            }
+
+            val sourceOutputs = runPactlCommand("list source-outputs")
+            val sourceOutput = sourceOutputs.firstOrNull {
+                it as JSONObject
+                it.getJSONObject("properties").optString("application.name", "").contains("TeamSpeak".toRegex(RegexOption.IGNORE_CASE))
+            }
+
+            if (sinkInput != null && sourceOutput != null) {
+                // index may be stored as String or Int depending on pactl version
+                tsSinkInputId = (sinkInput as JSONObject).optString("index", "-1").toIntOrNull() ?: -1
+                tsSourceOutputId = (sourceOutput as JSONObject).optString("index", "-1").toIntOrNull() ?: -1
+                if (tsSinkInputId != -1 && tsSourceOutputId != -1) break
+            }
+            println("Waiting for TeamSpeak audio streams to initialize... ($retries/20)")
+            delay(1.seconds)
+            retries++
+        }
+
+        if (tsSinkInputId != -1 && tsSourceOutputId != -1) {
+            // Mute teamspeak output
             commandRunner.runCommand(
                 "pactl set-sink-input-mute $tsSinkInputId 1",
                 printCommand = false,
@@ -826,16 +864,6 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             )
 
             // set teamspeak to monitor output from default sink
-            val tsSourceOutputs = runPactlCommand("list source-outputs")
-            val tsSourceOutputId =
-                tsSourceOutputs.first {
-                    it as JSONObject
-                    it.getJSONObject("properties").getString("application.name").contains("TeamSpeak3?".toRegex())
-                }.let {
-                    it as JSONObject
-                    it.getInt("index")
-                }
-
             val defaultSinkName =
                 commandRunner.runCommand(
                     "pacmd list-sinks | grep -e 'index:' -e 'name:' | grep -A 1 -E '\\s+\\*\\s+index:' | grep 'name'",

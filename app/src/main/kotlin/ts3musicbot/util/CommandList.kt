@@ -51,6 +51,7 @@ data class CommandList(
             Pair("sc-stop", "%sc-stop"),
             Pair("sc-playsong", "%sc-playsong"),
             Pair("sc-nowplaying", "%sc-nowplaying"),
+            Pair("volume", "%vol"),
         ).toMutableMap(),
 ) {
     var helpMessages = createHelpMessages()
@@ -116,7 +117,10 @@ data class CommandList(
                     "${commandList["sc-play"]}                     -Resumes the SoundCloud playback\n" +
                     "${commandList["sc-stop"]}                     -Stops the SoundCloud playback\n" +
                     "${commandList["sc-playsong"]} <link>          -Plays a SoundCloud song based on link\n" +
-                    "${commandList["sc-nowplaying"]}               -Shows information on currently playing track\n",
+                    "${commandList["sc-nowplaying"]}               -Shows information on currently playing track\n" +
+                    "\n" +
+                    "Volume commands:\n" +
+                    "${commandList["volume"]} <0-100>          -Set the playback volume (0 = silent, 100 = max)\n",
             ),
             Pair(
                 "queue-add",
@@ -565,6 +569,17 @@ data class CommandList(
                 "\n" +
                     "Showing help for ${commandList["sc-nowplaying"]} command:\n" +
                     "${commandList["sc-playsong"]} returns information on the currently playing SoundCloud track.",
+            ),
+            Pair(
+                "volume",
+                "\n" +
+                    "Showing help for ${commandList["volume"]} command:\n" +
+                    "${commandList["volume"]} sets the playback volume for both Spotify and YouTube/SoundCloud.\n" +
+                    "The volume value should be between 0 and 100.\n" +
+                    "Example - Set volume to 50%:\n" +
+                    "${commandList["volume"]} 50\n" +
+                    "Example - Set volume to max:\n" +
+                    "${commandList["volume"]} 100",
             ),
         )
 

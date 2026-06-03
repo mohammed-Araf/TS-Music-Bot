@@ -4,7 +4,6 @@ import com.github.manevolent.ts3j.event.TS3Listener
 import com.github.manevolent.ts3j.identity.LocalIdentity
 import com.github.manevolent.ts3j.protocol.client.ClientConnectionState
 import com.github.manevolent.ts3j.protocol.socket.client.LocalTeamspeakClientSocket
-import com.github.manevolent.ts3j.audio.Microphone
 import ts3musicbot.util.BotSettings
 import java.io.File
 import java.net.InetAddress
@@ -46,6 +45,12 @@ class TeamSpeak(botSettings: BotSettings) : Client(botSettings), TS3Listener {
         password: String = botSettings.serverPassword,
         port: Int = botSettings.serverPort,
     ): Boolean {
+        println("Waiting 25 seconds before connecting to allow old connections to disconnect...")
+        try {
+            Thread.sleep(25000L)
+        } catch (e: InterruptedException) {
+            e.printStackTrace()
+        }
         // connect to server and timeout if no connection after 10 seconds
         clientSocket.connect(InetSocketAddress(InetAddress.getByName(address), port), password, 10000L)
         clientSocket.waitForState(ClientConnectionState.CONNECTED, 10000L)
@@ -103,13 +108,6 @@ class TeamSpeak(botSettings: BotSettings) : Client(botSettings), TS3Listener {
      * @return returns the channel's id
      */
     private fun getChannelId(channelName: String): Int {
-        val numericId = channelName.toIntOrNull()
-        if (numericId != null) {
-            val channelList = clientSocket.listChannels()
-            if (channelList.any { it.id == numericId }) {
-                return numericId
-            }
-        }
         val targetChannel = channelName.substringAfterLast("/")
         val channelList = clientSocket.listChannels()
         val channels =
@@ -286,18 +284,6 @@ class TeamSpeak(botSettings: BotSettings) : Client(botSettings), TS3Listener {
                 }
                 break
             }
-        }
-    }
-
-    fun setMicrophone(microphone: Microphone) {
-        clientSocket.setMicrophone(microphone)
-    }
-
-    fun getClientInfo(clientId: Int): com.github.manevolent.ts3j.api.Client? {
-        return try {
-            clientSocket.getClientInfo(clientId)
-        } catch (e: Exception) {
-            null
         }
     }
 }

@@ -199,6 +199,26 @@ fun playerctl(
             }
         }
 
+        "volume" -> {
+            if (extra.isEmpty()) {
+                // Get current volume (returns a double 0.0-1.0)
+                val vol = dbusGet("Volume").outputText.substringAfter("double").trim()
+                val pct = (vol.toDoubleOrNull()?.times(100))?.toInt() ?: 0
+                Output("$pct")
+            } else {
+                // Set volume: extra is 0-100, convert to 0.0-1.0
+                val pct = extra.toIntOrNull()?.coerceIn(0, 100) ?: 100
+                val volDouble = pct / 100.0
+                commandRunner.runCommand(
+                    "dbus-send --print-reply --dest=org.mpris.MediaPlayer2.$mediaPlayer /org/mpris/MediaPlayer2 " +
+                        "org.freedesktop.DBus.Properties.Set string:'org.mpris.MediaPlayer2.Player' " +
+                        "string:'Volume' variant:double:$volDouble",
+                    printOutput = false,
+                    printErrors = false,
+                )
+            }
+        }
+
         else -> Output()
     }
 }

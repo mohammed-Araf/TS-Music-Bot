@@ -92,6 +92,12 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         }
     }
 
+    private suspend fun ensureToken() {
+        if (accessToken.isEmpty()) {
+            updateToken()
+        }
+    }
+
     private suspend fun fetchSpotifyToken(): String {
         fun getData(): Response {
             val auth = apiKey
@@ -118,7 +124,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${data.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            token = ""
+                            return@withContext
                         }
                     }
 
@@ -178,6 +185,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         resultLimit: Int,
         encodeQuery: Boolean,
     ): SearchResults {
+        ensureToken()
         val searchResults = ArrayList<SearchResult>()
 
         fun searchData(
@@ -500,9 +508,12 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         playlistLink: Link,
         shouldFetchTracks: Boolean,
     ): Playlist {
+        ensureToken()
         lateinit var playlist: Playlist
 
         suspend fun parsePlaylistData(data: JSONObject): Playlist {
+            val tracksObj = data.optJSONObject("tracks")
+            val tracksTotal = tracksObj?.optInt("total", 0) ?: 0
             return Playlist(
                 Name(decode(data.getString("name"))),
                 fetchUser(Link(data.getJSONObject("owner").getJSONObject("external_urls").getString("spotify"))),
@@ -513,7 +524,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                 if (shouldFetchTracks) {
                     fetchPlaylistTracks(playlistLink)
                 } else {
-                    TrackList(List(data.getJSONObject("tracks").getInt("total")) { Track() })
+                    TrackList(List(tracksTotal) { Track() })
                 },
                 Link(data.getJSONObject("external_urls").getString("spotify")),
             )
@@ -531,9 +542,9 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             return@withContext
                         } catch (e: JSONException) {
                             e.printStackTrace()
-                            // JSON broken, try getting the data again
                             println("Failed JSON:\n${playlistData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            playlist = Playlist(link = playlistLink)
+                            return@withContext
                         }
                     }
 
@@ -560,7 +571,10 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         return@withContext
                     }
 
-                    else -> this.cancel("HTTP ERROR! CODE ${playlistData.code}")
+                    else -> {
+                        playlist = Playlist(link = playlistLink)
+                        return@withContext
+                    }
                 }
             }
         }
@@ -571,230 +585,167 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         playlistLink: Link,
         limit: Int,
     ): TrackList {
+        ensureToken()
         val trackItems = ArrayList<Track>()
+        var listOffset = 0
+        var playlistLength = -1
 
-        suspend fun parsePlaylistData(playlistData: JSONObject) {
-            // get playlist length
-            var playlistLength =
-                playlistData.getJSONObject("tracks").getInt("total").let {
-                    if (limit != 0 && it > limit) limit else it
-                }
-            // Now get all tracks
-            // spotify only shows 100 items per search, so with each 100 items, listOffset will be increased
-            var listOffset = 0
-            while (trackItems.size < playlistLength) {
-                fun fetchItemData(): Response {
+        while (playlistLength == -1 || trackItems.size < playlistLength) {
+            val limitParam = if (limit != 0) {
+                val remaining = limit - trackItems.size
+                if (remaining <= 0) break
+                if (remaining < 100) remaining else 100
+            } else {
+                100
+            }
+
+            var jsonObject: JSONObject? = null
+            withContext(IO) {
+                var attempt = 0
+                while (attempt < 5) {
                     val linkBuilder = StringBuilder()
                     linkBuilder.append("https://api.spotify.com/v1/playlists/")
                     linkBuilder.append(playlistLink.getId())
-                    linkBuilder.append("/tracks?limit=" + if (limit != 0 && limit < 100) limit else 100)
+                    linkBuilder.append("/items?limit=$limitParam")
                     linkBuilder.append("&offset=$listOffset")
                     linkBuilder.append("&market=${market.ifEmpty { defaultMarket }}")
-                    return sendHttpRequest(
+                    
+                    val response = sendHttpRequest(
                         Link(linkBuilder.toString()),
                         extraProperties = ExtraProperties(mapOf(Pair("Authorization", "Bearer $accessToken"))),
                     )
-                }
 
-                suspend fun parseItems(items: JSONArray) {
-                    println("Parsing items... (${items.length()})")
-                    if (items.isEmpty) {
-                        playlistLength -= (playlistLength - trackItems.size)
+                    when (response.code.code) {
+                        HttpURLConnection.HTTP_OK -> {
+                            try {
+                                jsonObject = JSONObject(response.data.data)
+                                break
+                            } catch (e: JSONException) {
+                                e.printStackTrace()
+                                println("Failed to parse JSON from playlist items: ${response.data.data}")
+                                break
+                            }
+                        }
+                        HttpURLConnection.HTTP_UNAUTHORIZED -> {
+                            updateToken()
+                            attempt++
+                        }
+                        HTTP_TOO_MANY_REQUESTS -> {
+                            val waitSec = response.data.data.toLongOrNull() ?: 5L
+                            println("Too many requests! Waiting for $waitSec seconds.")
+                            delay(waitSec.seconds)
+                            attempt++
+                        }
+                        else -> {
+                            println("Failed to fetch playlist tracks: HTTP ${response.code.code}")
+                            break
+                        }
+                    }
+                }
+            }
+
+            val data = jsonObject ?: break
+
+            if (playlistLength == -1) {
+                val total = data.optInt("total", 0)
+                playlistLength = if (limit != 0 && total > limit) limit else total
+            }
+
+            val items = data.optJSONArray("items")
+            if (items == null || items.isEmpty) {
+                break
+            }
+
+            for (itemObj in items) {
+                if (itemObj !is JSONObject) continue
+                try {
+                    val trackObj = itemObj.optJSONObject("track") ?: continue
+                    val trackId = trackObj.optString("id", "")
+                    if (trackId.isEmpty()) continue
+                    if (trackObj.optBoolean("is_local", false)) {
+                        println("Skipping local track: $trackId")
+                        continue
+                    }
+
+                    val albumObj = trackObj.optJSONObject("album")
+                    val albumName = if (albumObj != null) {
+                        val nameStr = decode(albumObj.optString("name", ""))
+                        if (albumObj.optString("album_type", "") == "single") {
+                            Name("$nameStr (Single)")
+                        } else {
+                            Name(nameStr)
+                        }
                     } else {
-                        for (item in items) {
-                            item as JSONObject
-                            withContext(IO) {
-                                try {
-                                    if (item.get("track") != null) {
-                                        if (item.getJSONObject("track").get("id") != null) {
-                                            if (!item.getJSONObject("track").getBoolean("is_local")) {
-                                                val albumName =
-                                                    if (item.getJSONObject("track").getJSONObject("album")
-                                                            .getString("album_type") == "single"
-                                                    ) {
-                                                        Name(
-                                                            "${
-                                                                item.getJSONObject("track").getJSONObject("album")
-                                                                    .getString("name")
-                                                            } (Single)",
-                                                        )
-                                                    } else {
-                                                        Name(
-                                                            item.getJSONObject("track").getJSONObject("album")
-                                                                .getString("name"),
-                                                        )
-                                                    }
-                                                val artistsData = item.getJSONObject("track").getJSONArray("artists")
-                                                val artists =
-                                                    Artists(
-                                                        artistsData.map {
-                                                            it as JSONObject
-                                                            Artist(
-                                                                Name(it.getString("name")),
-                                                                Link(
-                                                                    it.getJSONObject("external_urls").getString("spotify"),
-                                                                ),
-                                                                TrackList(emptyList()),
-                                                                Artists(emptyList()),
-                                                            )
-                                                        },
-                                                    )
-                                                val album =
-                                                    Album(
-                                                        albumName,
-                                                        artists,
-                                                        getReleaseDate(
-                                                            item.getJSONObject(
-                                                                "track",
-                                                            ).getJSONObject("album").getString("release_date_precision"),
-                                                            item.getJSONObject("track").getJSONObject("album").getString("release_date"),
-                                                        ),
-                                                        TrackList(emptyList()),
-                                                        Link(
-                                                            item.getJSONObject("track").getJSONObject("album")
-                                                                .getJSONObject("external_urls").getString("spotify"),
-                                                        ),
-                                                    )
-                                                val title = Name(item.getJSONObject("track").getString("name"))
-                                                val trackId = item.getJSONObject("track").getString("id")
-                                                val linkedFrom =
-                                                    if (item.getJSONObject("track").has("linked_from")) {
-                                                        item.getJSONObject("track").getJSONObject("linked_from")
-                                                            .getJSONObject("external_urls").getString("spotify")
-                                                    } else {
-                                                        ""
-                                                    }
-                                                val link =
-                                                    Link("https://open.spotify.com/track/$trackId", trackId, listOf(Link(linkedFrom)))
-                                                val isPlayable =
-                                                    if (item.getJSONObject("track").getBoolean("is_playable")) {
-                                                        true
-                                                    } else {
-                                                        println("Track $link playability not certain! Doing extra checks...")
-                                                        fetchTrack(link).playability.isPlayable
-                                                    }
-                                                if (limit != 0) {
-                                                    if (trackItems.size < limit) {
-                                                        trackItems.add(
-                                                            Track(
-                                                                album,
-                                                                artists,
-                                                                title,
-                                                                link,
-                                                                Playability(isPlayable),
-                                                            ),
-                                                        )
-                                                    } else {
-                                                        println("Limit reached!")
-                                                    }
-                                                } else {
-                                                    trackItems.add(
-                                                        Track(
-                                                            album,
-                                                            artists,
-                                                            title,
-                                                            link,
-                                                            Playability(isPlayable),
-                                                        ),
-                                                    )
-                                                }
-                                            } else {
-                                                println("This is a local track. Skipping...")
-                                                playlistLength -= 1
-                                            }
-                                        } else {
-                                            println("Track id is null. Skipping...")
-                                            playlistLength -= 1
-                                        }
-                                    } else {
-                                        println("Track data null. Skipping...")
-                                        playlistLength -= 1
-                                    }
-                                } catch (e: JSONException) {
-                                    e.printStackTrace()
-                                    println("Failed to parse JSON from item:\n$item")
-                                    println("Track couldn't be parsed due to JSONException. Skipping...")
-                                    playlistLength -= 1
-                                }
-                            }
-                        }
+                        Name("")
                     }
-                }
 
-                withContext(IO) {
-                    while (true) {
-                        val itemData = fetchItemData()
-                        when (itemData.code.code) {
-                            HttpURLConnection.HTTP_OK -> {
-                                try {
-                                    val item = JSONObject(itemData.data.data)
-                                    parseItems(item.getJSONArray("items"))
-                                    listOffset += 100
-                                    return@withContext
-                                } catch (e: JSONException) {
-                                    e.printStackTrace()
-                                    // JSON broken, try getting the data again
-                                    println("Failed JSON:\n${itemData.data}\n")
-                                    this.cancel("Failed to get data from JSON")
-                                }
+                    val artistsData = trackObj.optJSONArray("artists")
+                    val artists = if (artistsData != null) {
+                        Artists(
+                            artistsData.map {
+                                val artJson = it as JSONObject
+                                Artist(
+                                    Name(artJson.optString("name", "")),
+                                    Link(artJson.optJSONObject("external_urls")?.optString("spotify", "") ?: ""),
+                                    TrackList(emptyList()),
+                                    Artists(emptyList()),
+                                )
                             }
-
-                            HttpURLConnection.HTTP_UNAUTHORIZED -> {
-                                // token expired, update it
-                                updateToken()
-                            }
-
-                            HTTP_TOO_MANY_REQUESTS -> {
-                                println("Too many requests! Waiting for ${itemData.data} seconds.")
-                                // wait for given time before next request.
-                                delay(itemData.data.data.toLong().seconds)
-                            }
-
-                            else -> this.cancel("HTTP ERROR! CODE: ${itemData.code}")
-                        }
+                        )
+                    } else {
+                        Artists(emptyList())
                     }
+
+                    val album = if (albumObj != null) {
+                        Album(
+                            albumName,
+                            artists,
+                            getReleaseDate(
+                                albumObj.optString("release_date_precision", ""),
+                                albumObj.optString("release_date", "")
+                            ),
+                            TrackList(emptyList()),
+                            Link(albumObj.optJSONObject("external_urls")?.optString("spotify", "") ?: "")
+                        )
+                    } else {
+                        Album()
+                    }
+
+                    val title = Name(trackObj.optString("name", ""))
+                    val linkedFrom = if (trackObj.has("linked_from")) {
+                        trackObj.optJSONObject("linked_from")?.optJSONObject("external_urls")?.optString("spotify", "") ?: ""
+                    } else {
+                        ""
+                    }
+                    val link = Link("https://open.spotify.com/track/$trackId", trackId, if (linkedFrom.isNotEmpty()) listOf(Link(linkedFrom)) else emptyList())
+
+                    val isPlayable = trackObj.optBoolean("is_playable", true)
+                    if (!isPlayable) {
+                        println("Track $link is marked as not playable in current market.")
+                    }
+
+                    if (limit != 0 && trackItems.size >= limit) {
+                        break
+                    }
+                    trackItems.add(
+                        Track(
+                            album,
+                            artists,
+                            title,
+                            link,
+                            Playability(isPlayable)
+                        )
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    println("Skipping parsing item due to exception: ${e.message}")
                 }
             }
+
+            listOffset += items.length()
+            if (items.length() == 0) break
         }
 
-        withContext(IO) {
-            while (true) {
-                val playlistData = fetchPlaylistData(playlistLink)
-                // check http return code
-                when (playlistData.code.code) {
-                    HttpURLConnection.HTTP_OK -> {
-                        try {
-                            val playlist = JSONObject(playlistData.data.data)
-                            parsePlaylistData(playlist)
-                            return@withContext
-                        } catch (e: JSONException) {
-                            e.printStackTrace()
-                            // JSON broken, try getting the data again
-                            println("Failed JSON:\n${playlistData.data}\n")
-                            this.cancel("Failed to get data from JSON")
-                        }
-                    }
-
-                    HttpURLConnection.HTTP_UNAUTHORIZED -> {
-                        // token expired, update
-                        updateToken()
-                    }
-
-                    HttpURLConnection.HTTP_NOT_FOUND -> {
-                        println("Error 404! $playlistLink not found!")
-                        return@withContext
-                    }
-
-                    HTTP_TOO_MANY_REQUESTS -> {
-                        println("Too many requests! Waiting for ${playlistData.data} seconds.")
-                        // wait for given time before next request.
-                        delay(playlistData.data.data.toLong().seconds)
-                    }
-
-                    else -> this.cancel("HTTP ERROR! CODE: ${playlistData.code}")
-                }
-            }
-        }
         return TrackList(trackItems)
     }
 
@@ -810,6 +761,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
     }
 
     override suspend fun fetchAlbum(albumLink: Link): Album {
+        ensureToken()
         lateinit var album: Album
 
         suspend fun parseAlbumData(data: JSONObject): Album {
@@ -844,9 +796,9 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             return@withContext
                         } catch (e: JSONException) {
                             e.printStackTrace()
-                            // JSON broken, try getting the data again
                             println("Failed JSON:\n${albumData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            album = Album()
+                            return@withContext
                         }
                     }
 
@@ -873,7 +825,11 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         delay(albumData.data.data.toLong().seconds)
                     }
 
-                    else -> println("HTTP ERROR! CODE ${albumData.code}")
+                    else -> {
+                        println("HTTP ERROR! CODE ${albumData.code}")
+                        album = Album()
+                        return@withContext
+                    }
                 }
             }
         }
@@ -884,6 +840,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         albumLink: Link,
         limit: Int,
     ): TrackList {
+        ensureToken()
         val trackItems = ArrayList<Track>()
 
         suspend fun parseAlbumData(albumData: JSONObject) {
@@ -992,7 +949,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                     e.printStackTrace()
                                     // JSON broken, try getting the data again
                                     println("Failed JSON:\n${albumTrackData.data}\n")
-                                    this.cancel("Failed to get data from JSON")
+                                    return@withContext
                                 }
                             }
 
@@ -1028,7 +985,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${albumData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            return@withContext
                         }
                     }
 
@@ -1056,6 +1013,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
     }
 
     override suspend fun fetchTrack(trackLink: Link): Track {
+        ensureToken()
         fun fetchTrackData(
             link: Link,
             spMarket: String = "",
@@ -1149,7 +1107,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                         e.printStackTrace()
                                         // JSON broken, try getting the data again
                                         println("Failed JSON:\n${trackData2.data}\n")
-                                        this.cancel("Failed to get data from JSON")
+                                        playable = false
+                                        return@withContext
                                     }
                                 }
 
@@ -1199,7 +1158,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${trackData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            track = Track()
+                            return@withContext
                         }
                     }
 
@@ -1241,6 +1201,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
         artistLink: Link,
         fetchRecommendations: Boolean,
     ): Artist {
+        ensureToken()
         fun fetchArtistData(): Response {
             val linkBuilder = StringBuilder()
             linkBuilder.append("$apiURI/artists/")
@@ -1374,7 +1335,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                         e.printStackTrace()
                                         // JSON broken, try getting the data again
                                         println("Failed JSON:\n${albumsResponse.data}\n")
-                                        this.cancel("Failed to get data from JSON")
+                                        return@withContext
                                     }
                                 }
 
@@ -1435,7 +1396,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                             e.printStackTrace()
                                             // JSON broken, try getting the data again
                                             println("Failed JSON:\n${topTracksData.data}\n")
-                                            this.cancel("Failed to get data from JSON")
+                                            break@topTracks
                                         }
                                     }
 
@@ -1466,7 +1427,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                             e.printStackTrace()
                                             // JSON broken, try getting the data again
                                             println("Failed JSON:\n${albumsData.data}\n")
-                                            this.cancel("Failed to get data from JSON")
+                                            break@albums
                                         }
                                     }
 
@@ -1517,7 +1478,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${artistData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            artist = Artist()
+                            return@withContext
                         }
                     }
 
@@ -1548,6 +1510,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
     }
 
     override suspend fun fetchUser(userLink: Link): User {
+        ensureToken()
         lateinit var user: User
 
         fun fetchUserData(): Response {
@@ -1653,7 +1616,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${userData.data}\n")
-                            this.cancel("Failed JSON")
+                            user = User()
+                            return@withContext
                         }
                     }
 
@@ -1665,7 +1629,6 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         val msg = "Error 404! $userLink not found!"
                         println(msg)
                         user = User()
-                        this.cancel(msg)
                         return@withContext
                     }
 
@@ -1694,6 +1657,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
     }
 
     suspend fun fetchShow(showLink: Link): Show {
+        ensureToken()
         lateinit var show: Show
 
         suspend fun getShowEpisodes(
@@ -1748,7 +1712,6 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                             // JSON broken, try getting the data again
                                             e.printStackTrace()
                                             println("Failed JSON:\n${data.data}\n")
-                                            this.cancel("Failed to get data from JSON")
                                             return@withContext
                                         }
                                     }
@@ -1760,8 +1723,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                                     HttpURLConnection.HTTP_NOT_FOUND -> {
                                         val msg = "ERROR 404!\nThe link \"${data.link}\" couldn't be found."
                                         println(msg)
-                                        this.cancel(msg)
-                                        return@withContext
+                                                                                return@withContext
                                     }
 
                                     HTTP_TOO_MANY_REQUESTS -> {
@@ -1791,8 +1753,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             } catch (e: JSONException) {
                                 e.printStackTrace()
                                 println("Failed JSON:\n${episodesData.data}\n")
-                                this.cancel("Failed to get data from JSON")
-                                return@withContext
+                                                                return@withContext
                             }
                         }
 
@@ -1803,8 +1764,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         HttpURLConnection.HTTP_NOT_FOUND -> {
                             val msg = "ERROR 404!\nThe link \"${episodesData.link}\" couldn't be found."
                             println(msg)
-                            this.cancel(msg)
-                            return@withContext
+                                                        return@withContext
                         }
 
                         HTTP_TOO_MANY_REQUESTS -> {
@@ -1844,8 +1804,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         } catch (e: JSONException) {
                             e.printStackTrace()
                             println("Failed JSON:\n${showData.data}\n")
-                            this.cancel("Failed to get data from JSON")
-                            return@withContext
+                                                        return@withContext
                         }
                     }
 
@@ -1857,16 +1816,14 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         val msg = "Error 404! $showLink not found!"
                         println(msg)
                         show = Show()
-                        this.cancel(msg)
-                        return@withContext
+                                                return@withContext
                     }
 
                     HttpURLConnection.HTTP_BAD_REQUEST -> {
                         val msg = "Error ${showData.code}! Bad request!!"
                         println(msg)
                         show = Show()
-                        this.cancel(msg)
-                        return@withContext
+                                                return@withContext
                     }
 
                     HTTP_TOO_MANY_REQUESTS -> {
@@ -1883,6 +1840,7 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
     }
 
     suspend fun fetchEpisode(episodeLink: Link): Episode {
+        ensureToken()
         lateinit var episode: Episode
 
         fun fetchEpisodeData(): Response {
@@ -1920,7 +1878,8 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                             e.printStackTrace()
                             // JSON broken, try getting the data again
                             println("Failed JSON:\n${episodeData.data}\n")
-                            this.cancel("Failed to get data from JSON")
+                            episode = Episode()
+                            return@withContext
                         }
                     }
 
@@ -1932,7 +1891,6 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         val msg = "Error 404! $episodeLink not found!"
                         println(msg)
                         episode = Episode()
-                        this.cancel(msg)
                         return@withContext
                     }
 
@@ -1940,7 +1898,6 @@ class Spotify(private val botSettings: BotSettings) : Service(ServiceType.SPOTIF
                         val msg = "Error ${episodeData.code}! Bad request!!"
                         println(msg)
                         episode = Episode()
-                        this.cancel(msg)
                         return@withContext
                     }
 

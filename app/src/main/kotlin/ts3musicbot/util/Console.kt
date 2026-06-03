@@ -19,13 +19,15 @@ class Console(
     private val commandRunner = CommandRunner()
 
     suspend fun startConsole() {
-        val reader = java.io.BufferedReader(java.io.InputStreamReader(System.`in`))
+        // start console
+        val console = System.console()
+        if (console == null) {
+            println("System console is not available. Console command input disabled.")
+            return
+        }
         println("Enter command \"help\" for all commands.")
         loop@ while (true) {
-            print("Command: ")
-            System.out.flush()
-            val userCommand = reader.readLine() ?: break
-            val trimmed = userCommand.trim()
+            val userCommand = console.readLine("Command: ")
             when (val command = userCommand.replace("\\s+.*$".toRegex(), "")) {
                 "help" ->
                     println(
@@ -122,21 +124,27 @@ class Console(
     }
 
     private suspend fun exit(command: String) {
-        val reader = java.io.BufferedReader(java.io.InputStreamReader(System.`in`))
-        var confirmed = false
-        while (!confirmed) {
-            print("Close TeamSpeak? [Y/n]: ")
-            System.out.flush()
-            val exitTeamSpeak = (reader.readLine() ?: "n").lowercase()
-            if (exitTeamSpeak.contentEquals("y") || exitTeamSpeak.contentEquals("yes") || exitTeamSpeak.contentEquals("")) {
-                confirmed = true
-                when (client) {
-                    is TeamSpeak -> client.disconnect()
-                    is OfficialTSClient -> client.stopTeamSpeak()
+        val console = System.console()
+        if (console == null) {
+            when (client) {
+                is TeamSpeak -> client.disconnect()
+                is OfficialTSClient -> client.stopTeamSpeak()
+            }
+            delay(1.seconds)
+        } else {
+            var confirmed = false
+            while (!confirmed) {
+                val exitTeamSpeak = console.readLine("Close TeamSpeak? [Y/n]: ").lowercase()
+                if (exitTeamSpeak.contentEquals("y") || exitTeamSpeak.contentEquals("yes") || exitTeamSpeak.contentEquals("")) {
+                    confirmed = true
+                    when (client) {
+                        is TeamSpeak -> client.disconnect()
+                        is OfficialTSClient -> client.stopTeamSpeak()
+                    }
+                    delay(1.seconds)
+                } else if (exitTeamSpeak.contentEquals("n") || exitTeamSpeak.contentEquals("no")) {
+                    break
                 }
-                delay(1.seconds)
-            } else if (exitTeamSpeak.contentEquals("n") || exitTeamSpeak.contentEquals("no")) {
-                break
             }
         }
 

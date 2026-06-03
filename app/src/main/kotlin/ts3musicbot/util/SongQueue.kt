@@ -1,39 +1,49 @@
 package ts3musicbot.util
 
-import com.sedmelluq.discord.lavaplayer.player.DefaultAudioPlayerManager
-import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager
-import com.sedmelluq.discord.lavaplayer.player.AudioPlayer
-import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler
-import com.sedmelluq.discord.lavaplayer.tools.FriendlyException
-import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist
-import com.sedmelluq.discord.lavaplayer.track.AudioTrack
-import com.sedmelluq.discord.lavaplayer.format.StandardAudioDataFormats
-import com.sedmelluq.discord.lavaplayer.player.event.AudioEventAdapter
-import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason
-
-import kotlinx.coroutines.*
-import kotlin.coroutines.resume
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import ts3musicbot.client.OfficialTSClient
+import ts3musicbot.services.Bandcamp
+import ts3musicbot.services.ServiceType
+import ts3musicbot.services.SoundCloud
+import ts3musicbot.services.Spotify
+import ts3musicbot.services.YouTube
 import java.io.File
 import java.util.Collections
 import kotlin.collections.ArrayList
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
-import ts3musicbot.client.TeamSpeak
-import ts3musicbot.client.TSAudioProvider
-import ts3musicbot.services.Spotify
-import ts3musicbot.services.SoundCloud
-import ts3musicbot.services.YouTube
-import ts3musicbot.services.Bandcamp
-import ts3musicbot.services.ServiceType
+private var songQueue = Collections.synchronizedList(ArrayList<Track>())
+
+private fun urlsMatch(u1: String, u2: String): Boolean {
+    if (u1 == u2) return true
+    if (u1.contains("spotify") && u2.contains("spotify")) {
+        try {
+            val id1 = u1.substringAfterLast(":").substringBefore("?").substringAfterLast("/")
+            val id2 = u2.substringAfterLast(":").substringBefore("?").substringAfterLast("/")
+            return id1.isNotEmpty() && id1 == id2
+        } catch (_: Exception) {}
+    }
+    return false
+}
 
 class SongQueue(
-    private val botSettings: BotSettings,
-    private val teamSpeak: Any,
-    private val spotify: Spotify,
-    private val soundCloud: SoundCloud,
-    private val youTube: YouTube,
-    private val bandcamp: Bandcamp,
+    botSettings: BotSettings,
+    teamSpeak: Any,
+    spotify: Spotify,
+    soundCloud: SoundCloud,
+    youTube: YouTube,
+    bandcamp: Bandcamp,
     private val playStateListener: PlayStateListener,
 ) : PlayStateListener {
+    private val trackPlayer = TrackPlayer(botSettings, teamSpeak, spotify, soundCloud, youTube, bandcamp, this)
+    private var queueState = State.QUEUE_STOPPED
 
     enum class State {
         QUEUE_PLAYING,
@@ -41,210 +51,193 @@ class SongQueue(
         QUEUE_STOPPED,
     }
 
-    private val songQueue = Collections.synchronizedList(ArrayList<Track>())
-    private var queueState = State.QUEUE_STOPPED
-
-    private val playerManager: AudioPlayerManager = DefaultAudioPlayerManager()
-    private val audioPlayer: AudioPlayer
-
-    var currentTrack: Track = Track()
-    var isLooping = false
-    var isQueueLooping = false
-    private var isSkipping = false
-
-    private var youtubeDisabled = false
-    private var consecutiveYtFailures = 0
-
-    init {
-        // 1. Configure LavaPlayer output format for standard Little-Endian 16-bit PCM (48kHz for TeamSpeak)
-        playerManager.configuration.setOutputFormat(StandardAudioDataFormats.DISCORD_PCM_S16_LE)
-        playerManager.setFrameBufferDuration(BotSettings.main.audio.bufferMs)
-
-
-        // 2. Register SoundCloud source manager
-        playerManager.registerSourceManager(com.sedmelluq.discord.lavaplayer.source.soundcloud.SoundCloudAudioSourceManager.createDefault())
-
-        try {
-            val youtubePlugin = dev.lavalink.youtube.YoutubeAudioSourceManager(
-                dev.lavalink.youtube.clients.Music(),
-                dev.lavalink.youtube.clients.AndroidVr(),
-                dev.lavalink.youtube.clients.Web(),
-                dev.lavalink.youtube.clients.WebEmbedded(),
-                dev.lavalink.youtube.clients.Tv()
-            )
-            
-            // Configure PO Token if provided
-            val potToken = BotSettings.providers.youtube.potToken
-            val visitorData = BotSettings.providers.youtube.visitorData
-            if (potToken.isNotEmpty() && visitorData.isNotEmpty()) {
-                println("[LAVAPLAYER] Configuring YouTube plugin with PO Token and Visitor Data...")
-                try {
-                    dev.lavalink.youtube.clients.Web.setPoTokenAndVisitorData(potToken, visitorData)
-                    dev.lavalink.youtube.clients.WebEmbedded.setPoTokenAndVisitorData(potToken, visitorData)
-                    println("[LAVAPLAYER] PO Token and Visitor Data set successfully.")
-                } catch (e: Exception) {
-                    println("[LAVAPLAYER] Failed to set PO Token / Visitor Data: ${e.message}")
-                }
-            }
-            
-            // Configure OAuth Refresh Token if provided
-            val oauthToken = BotSettings.providers.youtube.oauthRefreshToken
-            if (oauthToken.isNotEmpty()) {
-                try {
-                    if (oauthToken.equals("init", ignoreCase = true)) {
-                        println("[LAVAPLAYER] Configuring YouTube plugin: Initiating OAuth device flow...")
-                        youtubePlugin.useOauth2(null, false)
-                    } else {
-                        println("[LAVAPLAYER] Configuring YouTube plugin with OAuth Refresh Token...")
-                        youtubePlugin.useOauth2(oauthToken, true)
-                        println("[LAVAPLAYER] OAuth Refresh Token configured successfully.")
-                    }
-                } catch (e: Exception) {
-                    println("[LAVAPLAYER] Failed to configure OAuth: ${e.message}")
-                }
-            }
-
-            playerManager.registerSourceManager(youtubePlugin)
-            println("[LAVAPLAYER] Registered YouTube and SoundCloud source managers successfully.")
-        } catch (e: Exception) {
-            println("[LAVAPLAYER] Error registering YouTube source manager: ${e.message}")
-        }
-
-        audioPlayer = playerManager.createPlayer()
-
-        // Apply initial volume
-        audioPlayer.volume = BotSettings.main.audio.volume
-
-        // Register microphone in ts3j
-        if (teamSpeak is TeamSpeak) {
-            val provider = TSAudioProvider(audioPlayer)
-            teamSpeak.setMicrophone(provider)
-            println("[LAVAPLAYER] TSAudioProvider registered on LocalTeamspeakClientSocket.")
-        }
-
-        // Add LavaPlayer listener
-        audioPlayer.addListener(object : AudioEventAdapter() {
-            override fun onTrackEnd(player: AudioPlayer, track: AudioTrack, endReason: AudioTrackEndReason) {
-                if (isSkipping) return  // skip handles playNext() explicitly
-                if (endReason.mayStartNext) {
-                    onLavaTrackEnd()
-                }
-            }
-            override fun onTrackStart(player: AudioPlayer, track: AudioTrack) {
-                onLavaTrackStart()
-            }
-            override fun onTrackException(player: AudioPlayer, track: AudioTrack, exception: FriendlyException) {
-                println("[LAVAPLAYER] Error playing track ${track.info.title}: ${exception.message}")
-                exception.printStackTrace()
-            }
-        })
-    }
-
-    private fun onLavaTrackStart() {
-        queueState = State.QUEUE_PLAYING
-        playStateListener.onTrackStarted("lavaplayer", currentTrack)
-    }
-
-    private fun onLavaTrackEnd() {
-        if (isLooping) {
-            // Replay same track
-            CoroutineScope(Dispatchers.Default).launch {
-                playTrack(currentTrack)
-            }
-        } else {
-            if (isQueueLooping) {
-                songQueue.add(currentTrack)
-            }
-            playStateListener.onTrackEnded("lavaplayer", currentTrack)
-            playNext()
+    private fun setState(state: State) {
+        synchronized(queueState) {
+            queueState = state
         }
     }
 
-    fun getTrackPosition(): Long {
-        val track = audioPlayer.playingTrack
-        return if (track != null) track.position / 1000 else 0L
-    }
+    fun getState() = synchronized(queueState) { queueState }
 
-    fun getTrackLength(): Long {
-        val track = audioPlayer.playingTrack
-        return if (track != null) track.duration / 1000 else 0L
-    }
+    fun getTrackPosition() =
+        synchronized(trackPlayer) {
+            trackPlayer.trackPosition
+        }
 
-    fun addToQueue(track: Track, position: Int? = null): Boolean {
-        synchronized(songQueue) {
-            if (position != null && position in 0..songQueue.size) {
+    fun getTrackLength() =
+        synchronized(trackPlayer) {
+            trackPlayer.getTrackLength()
+        }
+
+    private fun setCurrent(track: Track) = synchronized(trackPlayer) { trackPlayer.track = track }
+
+    private fun getCurrent() = synchronized(trackPlayer) { trackPlayer.track }
+
+    /**
+     * Adds track to queue
+     * @param track song's link
+     * @param position position in which the song should be added.
+     */
+    fun addToQueue(
+        track: Track,
+        position: Int? = null,
+    ): Boolean {
+        val added = synchronized(songQueue) {
+            if (position != null) {
                 songQueue.add(position, track)
             } else {
                 songQueue.add(track)
             }
-            return true
+
+            songQueue.contains(track)
         }
+        if (added && getState() == State.QUEUE_STOPPED) {
+            startQueue()
+        }
+        return added
     }
 
-    fun addAllToQueue(trackList: TrackList, position: Int? = null): Boolean {
-        synchronized(songQueue) {
-            if (position != null && position in 0..songQueue.size) {
+    /**
+     * Adds a list of tracks to the queue
+     * @param trackList list of tracks to add to the queue
+     * @param position position in which the tracks should be added
+     */
+    fun addAllToQueue(
+        trackList: TrackList,
+        position: Int? = null,
+    ): Boolean {
+        val added = synchronized(songQueue) {
+            if (position != null) {
                 songQueue.addAll(position, trackList.trackList)
             } else {
                 songQueue.addAll(trackList.trackList)
             }
-            return true
+
+            songQueue.containsAll(trackList.trackList)
         }
+        if (added && getState() == State.QUEUE_STOPPED) {
+            startQueue()
+        }
+        return added
     }
 
+    /**
+     * Clear the queue
+     */
     fun clearQueue() {
         synchronized(songQueue) {
             songQueue.clear()
         }
     }
 
+    /**
+     * Delete a track from the queue.
+     * @param trackOrPosition the Track or position from where to remove a track.
+     */
     fun deleteTrack(trackOrPosition: Any) {
-        synchronized(songQueue) {
-            when (trackOrPosition) {
-                is Track -> songQueue.remove(trackOrPosition)
-                is Int -> if (trackOrPosition in 0 until songQueue.size) songQueue.removeAt(trackOrPosition)
-            }
+        when (trackOrPosition) {
+            is Track -> synchronized(songQueue) { songQueue.remove(trackOrPosition) }
+            is Int -> synchronized(songQueue) { songQueue.removeAt(trackOrPosition) }
         }
     }
 
+    /**
+     * Delete tracks from the queue.
+     * @param tracksOrPositions list of Tracks or positions of tracks to be deleted
+     */
     fun deleteTracks(tracksOrPositions: Any) {
-        synchronized(songQueue) {
-            if (tracksOrPositions is List<*>) {
-                val positions = ArrayList<Int>()
-                val tracks = ArrayList<Track>()
-                for (item in tracksOrPositions) {
-                    when (item) {
-                        is Track -> tracks.add(item)
-                        is Int -> positions.add(item)
-                    }
+        val tracks = ArrayList<Track>()
+        val positions = ArrayList<Int>()
+        if (tracksOrPositions is List<*>) {
+            for (item in tracksOrPositions) {
+                when (item) {
+                    is Track -> tracks.add(item)
+                    is Int -> positions.add(item)
                 }
-                songQueue.removeAll(tracks)
-                positions.sortedDescending().forEach { pos ->
-                    if (pos in 0 until songQueue.size) {
-                        songQueue.removeAt(pos)
-                    }
+            }
+        }
+        if (tracks.isNotEmpty()) {
+            synchronized(songQueue) { songQueue.removeAll(tracks) }
+        }
+        if (positions.isNotEmpty()) {
+            positions.sortDescending()
+            for (position in positions) {
+                synchronized(songQueue) { songQueue.removeAt(position) }
+            }
+        }
+    }
+
+    /**
+     * Moves a track to a new position
+     * @param trackPosition Position of the track to move
+     * @param newPosition New position of the track
+     */
+    private fun moveTrack(
+        trackPosition: Int,
+        newPosition: Int,
+    ) {
+        synchronized(songQueue) {
+            if (newPosition < songQueue.size && newPosition >= 0) {
+                val newTrack = songQueue[trackPosition]
+                songQueue.removeAt(trackPosition)
+                if (trackPosition < newPosition) {
+                    songQueue.add(newPosition - 1, newTrack)
+                } else {
+                    songQueue.add(newPosition, newTrack)
                 }
             }
         }
     }
 
-    fun moveTracks(positions: ArrayList<Int>, newPosition: Int): Boolean {
-        synchronized(songQueue) {
-            var targetPos = newPosition.coerceIn(0, songQueue.size)
-            val tracksToMove = positions.sorted().mapNotNull { pos ->
-                if (pos in 0 until songQueue.size) songQueue[pos] else null
+    /**
+     * Moves given tracks to a new position.
+     * Whenever these tracks are in a position that will be affected by the moving of the previous item,
+     * offsets are applied accordingly.
+     * @param positions an ArrayList<Int> containing the positions of the tracks to move.
+     * @param newPosition new position where to move tracks.
+     * @return returns true if newPosition has been offset due to moving a track
+     */
+    fun moveTracks(
+        positions: ArrayList<Int>,
+        newPosition: Int,
+    ): Boolean {
+        var newPosIsOffset = false
+        var newOffset = 0
+        val trackPositions: ArrayList<Int> =
+            positions.clone().let {
+                it as ArrayList<*>
+                it.map { pos -> pos as Int }
+            } as ArrayList<Int>
+        // loop through positions and move them to newPosition
+        for (index in trackPositions.indices) {
+            moveTrack(trackPositions[index], newPosition + newOffset)
+            if (trackPositions[index] >= newPosition) {
+                newOffset++
+            } else {
+                newPosIsOffset = true
             }
-            songQueue.removeAll(tracksToMove)
-            songQueue.addAll(targetPos.coerceAtMost(songQueue.size), tracksToMove)
-            return true
+
+            // if moving more than one track,
+            // apply appropriate offsets for remaining tracks to move
+            if (index != trackPositions.lastIndex) {
+                for (i in trackPositions.indices) {
+                    val pos = trackPositions[i]
+                    if (pos < trackPositions[index] && pos > newPosition) {
+                        trackPositions.removeAt(i)
+                        trackPositions.add(i, pos + 1)
+                    } else if (pos > trackPositions[index] && pos < newPosition) {
+                        trackPositions.removeAt(i)
+                        trackPositions.add(i, pos - 1)
+                    }
+                }
+            }
         }
+        return newPosIsOffset
     }
 
-    fun getQueue(): ArrayList<Track> = synchronized(songQueue) {
-        ArrayList(songQueue)
-    }
+    fun getQueue(): ArrayList<Track> = synchronized(songQueue) { songQueue }.toMutableList() as ArrayList<Track>
 
-    fun nowPlaying(): Track = currentTrack
+    fun nowPlaying(): Track = getCurrent()
 
     fun shuffleQueue() {
         synchronized(songQueue) {
@@ -253,164 +246,956 @@ class SongQueue(
     }
 
     fun skipSong() {
-        isSkipping = true
-        audioPlayer.stopTrack()
-        playStateListener.onTrackEnded("lavaplayer", currentTrack)
-        playNext()
-        isSkipping = false
+        when (getState()) {
+            State.QUEUE_PLAYING, State.QUEUE_PAUSED, State.QUEUE_STOPPED -> {
+                CoroutineScope(IO).launch {
+                    if (getQueue().isNotEmpty()) {
+                        println("Skipping current track.")
+                        stopQueue()
+                        delay(1.seconds)
+                        playNext()
+                    } else {
+                        println("Track cannot be skipped.")
+                    }
+                }
+            }
+        }
     }
 
+    // starts playing song queue
     fun startQueue() {
-        if (queueState == State.QUEUE_STOPPED) {
+        if (getState() == State.QUEUE_STOPPED) {
+            println("Starting queue.")
             playNext()
+        } else {
+            println("Song queue already active!")
         }
     }
 
     fun resumePlayback() {
-        audioPlayer.isPaused = false
-        queueState = State.QUEUE_PLAYING
-        playStateListener.onTrackResumed("lavaplayer", currentTrack)
+        synchronized(trackPlayer) { trackPlayer.resumeTrack() }
     }
 
     fun pausePlayback() {
-        audioPlayer.isPaused = true
-        queueState = State.QUEUE_PAUSED
-        playStateListener.onTrackPaused("lavaplayer", currentTrack)
+        synchronized(trackPlayer) { trackPlayer.pauseTrack() }
     }
 
     fun stopQueue() {
-        audioPlayer.stopTrack()
-        queueState = State.QUEUE_STOPPED
-        currentTrack = Track()
-        songQueue.clear()
-        playStateListener.onTrackStopped("lavaplayer", Track())
+        synchronized(trackPlayer) { trackPlayer.stopTrack() }
     }
 
+    /**
+     * Plays the next track in the queue.
+     **/
     private fun playNext() {
+        fun playTrack(track: Track) {
+            synchronized(trackPlayer) {
+                setCurrent(track)
+                setState(State.QUEUE_PLAYING)
+                trackPlayer.startTrack()
+            }
+        }
         synchronized(songQueue) {
             if (songQueue.isNotEmpty()) {
-                val nextTrack = songQueue.removeAt(0)
-                currentTrack = nextTrack
-                queueState = State.QUEUE_PLAYING
-                CoroutineScope(Dispatchers.Default).launch {
-                    playTrack(nextTrack)
+                var firstTrack = songQueue.first()
+                when (firstTrack.link.serviceType()) {
+                    ServiceType.YOUTUBE, ServiceType.SOUNDCLOUD, ServiceType.BANDCAMP -> {
+                        // check if youtube-dl is able to download the track
+                        var attempts = 0
+                        while (songQueue.isNotEmpty() &&
+                            CommandRunner()
+                                .runCommand(
+                                    "youtube-dl --extract-audio --audio-format best --audio-quality 0 " +
+                                        "--cookies youtube-dl.cookies --force-ipv4 --age-limit 21 " +
+                                        "--geo-bypass -s \"${firstTrack.link}\"; echo $?",
+                                    printOutput = false,
+                                    printErrors = false,
+                                ).outputText
+                                .lines()
+                                .last() != "0"
+                        ) {
+                            if (attempts < 5) {
+                                println("Error downloading track! Trying again...")
+                                attempts++
+                            } else {
+                                println(
+                                    "youtube-dl cannot download this track! Skipping...\n" +
+                                        "Check if a newer version of youtube-dl is available and update it " +
+                                        "to the latest one if you already haven't.",
+                                )
+                                songQueue.removeFirst()
+                                if (songQueue.isNotEmpty()) {
+                                    firstTrack = songQueue.first()
+                                } else {
+                                    break
+                                }
+                            }
+                        }
+                        if (songQueue.isNotEmpty()) {
+                            playTrack(firstTrack)
+                        } else {
+                            println("Song queue is empty!")
+                            stopQueue()
+                        }
+                    }
+
+                    else -> playTrack(firstTrack)
                 }
             } else {
-                queueState = State.QUEUE_STOPPED
-                currentTrack = Track()
-                playStateListener.onTrackStopped("lavaplayer", Track())
+                println("Song queue is empty!")
+                stopQueue()
             }
         }
     }
 
-    private suspend fun playTrack(track: Track) {
-        val link = track.link.link
-        var audioTrack: AudioTrack? = null
-
-        if (track.link.serviceType() == ServiceType.SPOTIFY) {
-            val primaryArtist = track.artists.artists.firstOrNull()?.name?.name ?: ""
-            val query = if (primaryArtist.isNotEmpty()) "$primaryArtist ${track.title.name}" else track.title.name
-            println("[LAVAPLAYER] Resolving Spotify track: $query")
-            audioTrack = searchAndLoad(query)
-        } else {
-            audioTrack = loadDirect(link)
-            if (audioTrack == null) {
-                val primaryArtist = track.artists.artists.firstOrNull()?.name?.name ?: ""
-                val query = if (primaryArtist.isNotEmpty()) "$primaryArtist ${track.title.name}" else track.title.name
-                println("[LAVAPLAYER] Loading direct failed; searching: $query")
-                audioTrack = searchAndLoad(query)
-            }
-        }
-
-        if (audioTrack != null) {
-            audioPlayer.playTrack(audioTrack)
-        } else {
-            println("[LAVAPLAYER] Unplayable track: ${track.title.name}. Skipping...")
-            playNext()
+    override fun onTrackEnded(
+        player: String,
+        track: Track,
+    ) {
+        playStateListener.onTrackEnded(player, track)
+        println("Track ended.")
+        when (queueState) {
+            State.QUEUE_PLAYING, State.QUEUE_PAUSED -> playNext()
+            else -> {}
         }
     }
 
-    private suspend fun loadDirect(identifier: String): AudioTrack? {
-        val result = loadItemWithTimeout(identifier)
-        return when (result) {
-            is AudioTrack -> result
-            is AudioPlaylist -> result.tracks.firstOrNull()
-            else -> null
-        }
+    override fun onTrackPaused(
+        player: String,
+        track: Track,
+    ) {
+        setState(State.QUEUE_PAUSED)
+        println("Queue paused.")
+        playStateListener.onTrackPaused(player, track)
     }
 
-    private suspend fun searchAndLoad(query: String): AudioTrack? {
-        // 1. Try custom SoundCloud search first using resolved client ID
-        try {
-            println("[LAVAPLAYER] Searching SoundCloud for: $query")
-            val results = soundCloud.search(ts3musicbot.util.SearchType("track"), ts3musicbot.util.SearchQuery(query))
-            val firstResult = results.results.firstOrNull()
-            if (firstResult != null) {
-                println("[LAVAPLAYER] Found SoundCloud track: ${firstResult.result.name.name} (${firstResult.link.link})")
-                val track = loadDirect(firstResult.link.link)
-                if (track != null) return track
-            } else {
-                println("[LAVAPLAYER] SoundCloud search returned no results for: $query")
-            }
-        } catch (e: Exception) {
-            println("[LAVAPLAYER] Custom SoundCloud search failed: ${e.message}")
-        }
-
-        // 2. Try LavaPlayer's built-in SoundCloud Search
-        val scTrack = loadDirect("scsearch:$query")
-        if (scTrack != null) return scTrack
-
-        // 3. Try YouTube Search (if not disabled)
-        if (!youtubeDisabled) {
-            val ytTrack = loadDirect("ytsearch:$query")
-            if (ytTrack != null) {
-                consecutiveYtFailures = 0
-                return ytTrack
-            } else {
-                consecutiveYtFailures++
-                if (consecutiveYtFailures >= 3) {
-                    youtubeDisabled = true
-                    println("[WARNING] YouTube provider disabled due to 3 consecutive failures.")
-                }
-            }
-        }
-        return null
+    override fun onTrackResumed(
+        player: String,
+        track: Track,
+    ) {
+        setState(State.QUEUE_PLAYING)
+        println("Queue resumed.")
+        playStateListener.onTrackResumed(player, track)
     }
 
-    private suspend fun loadItemWithTimeout(identifier: String): Any? {
-        val timeout = if (identifier.startsWith("ytsearch:") || identifier.contains("youtube") || identifier.contains("youtu.be")) 2000L else 5000L
-        return withTimeoutOrNull(timeout) {
-            suspendCancellableCoroutine { cont ->
-                playerManager.loadItem(identifier, object : AudioLoadResultHandler {
-                    override fun trackLoaded(track: AudioTrack) {
-                        cont.resume(track)
-                    }
-                    override fun playlistLoaded(playlist: AudioPlaylist) {
-                        cont.resume(playlist)
-                    }
-                    override fun noMatches() {
-                        cont.resume(null)
-                    }
-                    override fun loadFailed(exception: FriendlyException) {
-                        cont.resume(null)
-                    }
-                })
-            }
-        }
+    override fun onTrackStarted(
+        player: String,
+        track: Track,
+    ) {
+        setState(State.QUEUE_PLAYING)
+        setCurrent(track)
+        deleteTrack(track)
+        println("Track started.")
+        playStateListener.onTrackStarted(player, track)
     }
 
-    fun setVolume(vol: Int) {
-        audioPlayer.volume = vol.coerceIn(0, 100)
+    override fun onTrackStopped(
+        player: String,
+        track: Track,
+    ) {
+        setState(State.QUEUE_STOPPED)
+        println("Queue stopped.")
+        playStateListener.onTrackStopped(player, track)
     }
 
-    fun getVolume(): Int {
-        return audioPlayer.volume
-    }
-
-    override fun onTrackEnded(player: String, track: Track) {}
-    override fun onTrackPaused(player: String, track: Track) {}
-    override fun onTrackResumed(player: String, track: Track) {}
-    override fun onTrackStarted(player: String, track: Track) {}
-    override fun onTrackStopped(player: String, track: Track) {}
     override fun onAdPlaying() {}
+
+    private class TrackPlayer(
+        val botSettings: BotSettings,
+        val teamSpeak: Any,
+        val spotify: Spotify,
+        val soundCloud: SoundCloud,
+        val youTube: YouTube,
+        val bandcamp: Bandcamp,
+        val listener: PlayStateListener,
+    ) {
+        var trackJob = Job()
+        var trackPositionJob = Job()
+
+        var trackPosition = 0L
+        var startPosition = 0L
+        var wasPaused = false
+
+        // shouldPause is checked when playback status is set to "Playing" after the track wasPaused.
+        // If shouldPause, the track is then paused again. This really only happens if the media player in question decides to crap itself
+        // for whatever reason
+        var shouldPause = true
+
+        var track = Track()
+        private val commandRunner = CommandRunner()
+
+        /**
+         * get the player suitable for playing the current track
+         */
+        fun getPlayer() =
+            when (track.link.serviceType()) {
+                ServiceType.SPOTIFY -> botSettings.spotifyPlayer
+                ServiceType.YOUTUBE, ServiceType.SOUNDCLOUD, ServiceType.BANDCAMP -> "mpv"
+                else -> ""
+            }
+
+        fun playerStatus() = playerctl(getPlayer(), "status")
+
+        fun currentUrl(): String {
+            val metadata = playerctl(getPlayer(), "metadata")
+            return if (metadata.errorText.isEmpty()) {
+                metadata.ifOutputTextNotEmpty { text ->
+                    text.lines()
+                        .first { it.contains("xesam:url") }
+                        .replace("(^.+\\s+\"?|\"?$)".toRegex(), "")
+                }
+            } else {
+                ""
+            }
+        }
+
+        /**
+         * Get track length in seconds
+         * @return track length in seconds
+         */
+        fun getTrackLength(): Long {
+            val lengthMicroseconds: Long =
+                try {
+                    playerctl(getPlayer(), "metadata")
+                        .outputText
+                        .lines()
+                        .first { it.contains("mpris:length") }
+                        .replace("^.+\\s+".toRegex(), "")
+                        .toLong()
+                } catch (_: Exception) {
+                    // track hasn't started
+                    0L
+                }
+            val minutes = lengthMicroseconds / 1000000 / 60
+            val seconds = lengthMicroseconds / 1000000 % 60
+            // convert to seconds
+            return minutes * 60 + seconds
+        }
+
+        fun refreshPulseAudio() {
+            // if using pulseaudio, refresh it using pasuspender
+            if (
+                commandRunner
+                    .runCommand("command -v pasuspender", printOutput = false, printErrors = false)
+                    .outputText
+                    .isNotEmpty()
+            ) {
+                commandRunner.runCommand("pasuspender true", printOutput = false, printErrors = false)
+            }
+        }
+
+        fun checkTeamSpeakAudio(trackJob: Job) {
+            // check if the teamspeak is outputting audio, if not, restart the client.
+            if (teamSpeak is OfficialTSClient) {
+                if (!teamSpeak.audioIsWorking()) {
+                    println("TeamSpeak audio is broken, restarting client.")
+                    runBlocking(trackJob + IO) {
+                        teamSpeak.restartClient()
+                    }
+                }
+            }
+        }
+
+        fun killPlayer(player: String) {
+            while (commandRunner.runCommand("ps aux | grep $player | grep -v grep", printOutput = false).outputText.isNotEmpty()) {
+                when (player) {
+                    "spotify", "mpv" -> commandRunner.runCommand("pkill -9 $player", ignoreOutput = true)
+                    "ncspot" -> {
+                        playerctl(player, "stop")
+                        commandRunner.runCommand("pkill -9 ncspot")
+                        commandRunner.runCommand("tmux kill-session -t ncspot", ignoreOutput = true)
+                    }
+                    "spotify_player" -> {
+                        playerctl(player, "stop")
+                        commandRunner.runCommand("pkill -9 spotify_player")
+                        commandRunner.runCommand("tmux kill-session -t spotify_player", ignoreOutput = true)
+                    }
+                    "spotifyd" -> commandRunner.runCommand("echo \"$player isn't well supported yet, please kill it manually.\"")
+                    else -> commandRunner.runCommand("echo \"$player is not a supported player, please kill it manually!\" > /dev/stderr; return 2")
+                }
+            }
+        }
+
+        /**
+         * Check if the player's process for the current track is running
+         * @return returns true if the process is running
+         */
+        fun processRunning(player: String = getPlayer()) =
+            commandRunner.runCommand("ps aux | grep $player | grep -v grep", printOutput = false)
+                .outputText.isNotEmpty()
+
+        /**
+         * Starts the appropriate media player if not already started and then starts playing the track
+         * @param startAt start the track at a specific position (in seconds)
+         */
+        fun startTrack(startAt: Long = 0L) {
+            synchronized(this) {
+                trackPositionJob.cancel()
+                trackPosition = 0
+                startPosition = startAt
+                trackJob.cancel()
+                trackJob = Job()
+                refreshPulseAudio()
+                checkTeamSpeakAudio(trackJob)
+            }
+
+            suspend fun startSpotifyPlayer(shouldSetPrefs: Boolean = true) {
+                fun startCommand() =
+                    when (val player = botSettings.spotifyPlayer) {
+                        "spotify" ->
+                            commandRunner.runCommand(
+                                "xvfb-run -a spotify --no-zygote --disable-gpu" +
+                                    if (botSettings.spotifyUsername.isNotEmpty() && botSettings.spotifyPassword.isNotEmpty()) {
+                                        " --username=${botSettings.spotifyUsername} --password=${botSettings.spotifyPassword}"
+                                    } else {
+                                        ""
+                                    } + " &",
+                                ignoreOutput = true,
+                                printCommand = true,
+                                inheritIO = true,
+                            )
+
+                        "ncspot", "spotify_player" ->
+                            commandRunner.runCommand(
+                                "tmux new -s $player -n player -d; tmux send-keys -t $player \"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\\\$(id -u)/bus; $player\" Enter",
+                                ignoreOutput = true,
+                                printCommand = true,
+                            )
+
+                        "spotifyd" -> commandRunner.runCommand("echo \"spotifyd isn't well supported yet, please start it manually.\"")
+                        else ->
+                            commandRunner.runCommand(
+                                "echo \"${botSettings.spotifyPlayer} is not a supported player!\" > /dev/stderr; return 2",
+                            )
+                    }
+
+                // starts the player
+                suspend fun startPlayer() {
+                    startCommand()
+                    delay(3.seconds)
+
+                    // sometimes the spotify player has problems starting, so ensure it actually starts.
+                    println()
+                    var attempts = 0
+                    val player = getPlayer()
+                    val maxAttempts = when (player) {
+                        "spotify", "mpv" -> 20
+                        else -> 300
+                    }
+                    while (!processRunning()) {
+                        if (attempts < maxAttempts) {
+                            print("\rWaiting for ${getPlayer()} to start${".".repeat(attempts / 2)}")
+                            delay(1.seconds)
+                            attempts++
+                        } else {
+                            println("\nTrying again.")
+                            attempts = 0
+                            killPlayer(getPlayer())
+                            delay(1.seconds)
+                            startCommand()
+                            delay(2.seconds)
+                        }
+                    }
+                    println()
+                }
+
+                // restarts the player
+                suspend fun restartPlayer() {
+                    killPlayer(getPlayer())
+                    delay(100.milliseconds)
+                    startPlayer()
+                }
+
+                // set the spotify player's config options
+                suspend fun setPrefs() {
+                    when (botSettings.spotifyPlayer) {
+                        "spotify" -> {
+                            // autoplay needs to be disabled so the spotify client doesn't start playing stuff on its own.
+                            // friend feed, notifications, release announcements etc. are disabled just for performance.
+                            // volume normalization is enabled to get more consistent volume between tracks.
+                            val usersPath = System.getProperty("user.home") + "/.config/spotify/Users"
+                            if (!File(usersPath).exists()) {
+                                println("Spotify config files not found, starting player once to create files.")
+                                startPlayer()
+                            }
+                            val users = File(usersPath).listFiles()
+                            if (users != null && users.isNotEmpty()) {
+                                for (user in users) {
+                                    val prefsFile = File("${user.listFiles()?.first { it.name == "prefs" }}")
+                                    if (prefsFile.exists()) {
+                                        val newPrefs = StringBuilder()
+                                        val prefs = emptyMap<String, String>().toMutableMap()
+                                        prefsFile.readLines().forEach {
+                                            val split = it.split("=".toRegex())
+                                            prefs[split.first()] = split.last()
+                                        }
+
+                                        prefs["ui.right_panel_content"] = "0"
+                                        listOf(
+                                            "ui.track_notifications_enabled",
+                                            "ui.show_friend_feed",
+                                            "app.player.autoplay",
+                                        ).forEach { prefs[it] = "false" }
+
+                                        listOf(
+                                            "ui.hide_hpto",
+                                            "audio.normalize_v2",
+                                        ).forEach { prefs[it] = "true" }
+
+                                        // set normalization volume level.
+                                        // 0 = quiet, 1 = normal, 2 = loud.
+                                        prefs["audio.loudness.environment"] = "1"
+
+                                        // set audio streaming quality. 4 is the highest, which is equivalent to 320kbps bitrate.
+                                        // 0 = auto (based on connection quality)
+                                        // 1 = low (24kbps bitrate)
+                                        // 2 = normal (96kbps bitrate)
+                                        // 3 = high (160kbps bitrate)
+                                        // 4 = very high (320kbps bitrate)
+                                        listOf(
+                                            "audio.play_bitrate_enumeration",
+                                            "audio.play_bitrate_non_metered_enumeration",
+                                        ).forEach { prefs[it] = "4" }
+
+                                        prefs.forEach {
+                                            newPrefs.appendLine("${it.key}=${it.value}")
+                                        }
+                                        prefsFile.delete()
+                                        withContext(IO) {
+                                            prefsFile.createNewFile()
+                                        }
+                                        prefsFile.writeText(newPrefs.toString())
+                                    }
+                                }
+                            } else {
+                                println("Error! Not logged in to a Spotify account.")
+                            }
+                        }
+
+                        "ncspot" -> {
+                            val homePath = System.getProperty("user.home")
+                            val credentialsFile = File("$homePath/.cache/ncspot/librespot/credentials.json")
+                            val configPath = "$homePath/.config/ncspot"
+                            if (!credentialsFile.exists()) {
+                                println("Not logged in to ncspot! Creating config file...")
+                                // If the credentials file doesn't exist, the user hasn't logged into ncspot.
+                                // In this case, write a new config file in ~/.config/ncspot/config.toml
+                                // This however, will require the user to have their spotify username & password defined
+                                // in the musicbot's config file.
+
+                                if (botSettings.spotifyUsername.isEmpty() || botSettings.spotifyPassword.isEmpty()) {
+                                    println("Error! Missing Spotify username and/or password in the musicbot's config file!")
+                                }
+
+                                // create the config directory if it doesn't already exist
+                                File(configPath).mkdirs()
+
+                                val configFile = File("$configPath/config.toml")
+                                val newConfig = StringBuilder()
+                                newConfig.appendLine("# This config was auto-generated by ts3-musicbot.")
+                                newConfig.appendLine("# You may adjust values such as audio_cache and audio_cache_size,")
+                                newConfig.appendLine("# But the other options that have been added automatically should not be changed.")
+                                newConfig.appendLine()
+                                newConfig.appendLine("# You may check the ncspot github for a full list of configuration options:")
+                                newConfig.appendLine("# https://github.com/hrkfdn/ncspot/blob/main/doc/users.md#configuration")
+                                newConfig.appendLine()
+                                newConfig.appendLine("audio_cache = true")
+                                newConfig.appendLine("# Audio cache size in MiB")
+                                newConfig.appendLine("audio_cache_size = 1024")
+                                newConfig.appendLine()
+                                newConfig.appendLine("# Although not used when playing the music bot's own song queue,")
+                                newConfig.appendLine("# gapless playback improves the listening experience when controlling")
+                                newConfig.appendLine("# the player manually.")
+                                newConfig.appendLine("gapless = true")
+                                newConfig.appendLine()
+                                newConfig.appendLine("# Volume normalization")
+                                newConfig.appendLine("volnorm = true")
+                                newConfig.appendLine("# Amount of normalization to apply in dB")
+                                newConfig.appendLine("volnorm_pregain = -1.8")
+                                newConfig.appendLine()
+                                newConfig.appendLine("# Default playback state")
+                                newConfig.appendLine("playback_state = \"Stopped\"")
+                                newConfig.appendLine("[saved_state]")
+                                newConfig.appendLine("repeat = false")
+                                newConfig.appendLine("shuffle = false")
+                                newConfig.appendLine()
+                                if (configFile.exists()) {
+                                    configFile.delete()
+                                }
+
+                                withContext(IO) {
+                                    configFile.createNewFile()
+                                }
+                                configFile.writeText(newConfig.toString())
+                            }
+                        }
+                    }
+                }
+
+                if (shouldSetPrefs) {
+                    setPrefs()
+                    startSpotifyPlayer(false)
+                } else {
+                    restartPlayer()
+                }
+            }
+
+            // starts playing the track
+            suspend fun openTrack() {
+                var trackLength = getTrackLength()
+
+                suspend fun startCountingTrackPosition(job: Job) {
+                    trackLength = getTrackLength()
+
+                    /**
+                     * Get the current track position in seconds
+                     * @return returns current track position in seconds
+                     */
+                    fun getCurrentPosition(): Long {
+                        val microseconds = playerctl(getPlayer(), "position").outputText.toLong()
+                        return microseconds / 1000000
+                    }
+                    println()
+                    withContext(job + IO) {
+                        while (job.isActive) {
+                            val currentPos = getCurrentPosition()
+                            if (playerStatus().outputText == "Playing" && currentPos > trackPosition) {
+                                trackPosition = currentPos
+                            }
+                            print("\rTrack Position: $trackPosition/$trackLength seconds")
+                            if (trackPosition > trackLength + 30) {
+                                println("Wait.. what?")
+                                if (trackLength == 0L) {
+                                    println("Huh, why is trackLength 0?!\nTrying to get it again...")
+                                    trackLength = getTrackLength()
+                                } else {
+                                    skipTrack()
+                                }
+                            }
+                            delay(500.milliseconds)
+                        }
+                    }
+                }
+
+                // try to play the track
+                val player = getPlayer()
+                when (val type = track.link.serviceType()) {
+                    ServiceType.SPOTIFY -> {
+                        // check active processes and wait for the spotify player to start
+                        if (!processRunning()) {
+                            startSpotifyPlayer()
+                        }
+                        var waitTime = 0
+                        while (!processRunning()) {
+                            if (waitTime < 10) {
+                                delay(1.seconds)
+                                waitTime++
+                            } else {
+                                waitTime = 0
+                                startSpotifyPlayer()
+                                delay(1.seconds)
+                            }
+                        }
+                        var attempts = 0
+                        var playingAttempts = 0
+                        var dots = 0
+                        // This check should probably be included into the processRunning function (and maybe it needs to be renamed too)
+                        var shouldDelay = false
+                        while (!playerctl(command = "list").outputText.contains(player)) {
+                            shouldDelay = true
+                            print("\rWaiting for the player to get ready for playback" + ".".repeat(dots))
+                            if (dots < 120) {
+                                dots++
+                                delay(1.seconds)
+                            } else {
+                                // TODO: Figure out something sensible to do here
+                                print("\nThe player really seems to be stuck, but proceeding anyway...")
+                                break
+                            }
+                        }
+                        if (shouldDelay) {
+                            delay(3.seconds)
+                        }
+                        println()
+                        println("Trying to play track \"${track.link}\" using $player as the player.")
+                        if (track.link.alternativeLinks.isNotEmpty()) {
+                            println("This track is also linked to:\n" + track.link.alternativeLinks.joinToString(", "))
+                        }
+                        while (!playerStatus().outputText.contains("Playing")) {
+                            if (playingAttempts < 5) {
+                                if (attempts < 10) {
+                                    playerctl(
+                                        getPlayer(),
+                                        "open",
+                                        "spotify:" +
+                                            if (track.link.link.contains("/track/")) {
+                                                "track"
+                                            } else {
+                                                "episode"
+                                            } + ":" +
+                                            track.link.getId(),
+                                    )
+                                    attempts++
+                                    delay(500.milliseconds)
+                                    if (playerStatus().outputText != "Playing") {
+                                        delay(3500.milliseconds)
+                                    }
+                                } else {
+                                    println("The player may be stuck, trying to start it again.")
+                                    attempts = 0
+                                    playingAttempts++
+                                    startSpotifyPlayer()
+                                }
+                            } else {
+                                // check again if the current track is actually playable
+                                if (spotify.fetchTrack(track.link).playability.isPlayable) {
+                                    playingAttempts = 0
+                                } else {
+                                    println("The track \"${track.link}\" is not playable! Skipping...")
+                                }
+                                skipTrack()
+                            }
+                        }
+                        playerctl(getPlayer(), "volume", botSettings.ytVolume.toString())
+                    }
+
+                    ServiceType.YOUTUBE, ServiceType.SOUNDCLOUD, ServiceType.BANDCAMP -> {
+                        suspend fun startMPV(job: Job) {
+                            val volume: Int
+                            val service = when (type) {
+                                ServiceType.SOUNDCLOUD -> {
+                                    volume = botSettings.scVolume
+                                    soundCloud
+                                }
+                                ServiceType.YOUTUBE -> {
+                                    volume = botSettings.ytVolume
+                                    youTube
+                                }
+                                ServiceType.BANDCAMP -> {
+                                    volume = botSettings.bcVolume
+                                    bandcamp
+                                }
+                            }
+
+                            val mpvRunnable =
+                                Runnable {
+                                    commandRunner.runCommand(
+                                        "mpv --terminal=no --no-video" +
+                                            " --ytdl-raw-options=extract-audio=,audio-format=best,audio-quality=0" +
+                                            if (track.link.serviceType() == ServiceType.YOUTUBE) {
+                                                ",cookies=youtube-dl.cookies,force-ipv4=,age-limit=21,geo-bypass="
+                                            } else {
+                                                ""
+                                            } +
+                                            " --ytdl \"${track.link}\" --volume=$volume &",
+                                        inheritIO = true,
+                                        ignoreOutput = true,
+                                        printCommand = true,
+                                    )
+                                }
+                            withContext(IO + job) {
+                                mpvRunnable.run()
+                                var attempts = 0
+                                var playingAttempts = 0
+                                while (job.isActive && !processRunning()) {
+                                    if (playingAttempts < 5) {
+                                        println("Waiting for ${getPlayer()} to start.")
+                                        // if playback hasn't started after twenty seconds, try starting playback again.
+                                        if (attempts < 20) {
+                                            delay(1.seconds)
+                                            attempts++
+                                        } else {
+                                            println("The player may be stuck, trying to start it again.")
+                                            attempts = 0
+                                            playingAttempts++
+                                            killPlayer("mpv")
+                                            delay(1.seconds)
+                                            mpvRunnable.run()
+                                        }
+                                    } else {
+                                        // check again if the current track is actually playable
+                                        if (service.fetchTrack(track.link).playability.isPlayable) {
+                                            playingAttempts = 0
+                                        } else {
+                                            println("The track \"${track.link}\" is not playable! Skipping...")
+                                        }
+                                        skipTrack()
+                                    }
+                                }
+                            }
+                        }
+
+                        var currentJob = Job()
+                        startMPV(currentJob)
+                        delay(7.seconds)
+                        var attempts = 0
+                        while (!playerStatus().outputText.contains("Playing")) {
+                            println("Waiting for track to start playing")
+                            delay(1.seconds)
+                            if (attempts < 10) {
+                                delay(1.seconds)
+                                attempts++
+                            } else {
+                                attempts = 0
+                                currentJob.cancel()
+                                delay(1.seconds)
+                                currentJob = Job()
+                                startMPV(currentJob)
+                            }
+                        }
+                    }
+
+                    else -> {
+                        println("Error: ${track.link} is not a supported link type!")
+                        synchronized(songQueue) {
+                            println("Removing track from queue.")
+                            songQueue.remove(track)
+                        }
+                        trackPositionJob.cancel()
+                        trackJob.complete()
+                        listener.onTrackStopped(getPlayer(), track)
+                    }
+                }
+
+                loop@ while (trackJob.isActive) {
+                    val status = playerStatus()
+                    val url = currentUrl()
+
+                    if (url.isEmpty() ||
+                        urlsMatch(url, track.link.link) ||
+                        track.link.alternativeLinks.any { urlsMatch(url, it.link) } ||
+                        url.startsWith("https://open.spotify.com/ad/")
+                    ) {
+                        when (status.outputText) {
+                            "Playing" -> {
+                                while (currentUrl().startsWith("https://open.spotify.com/ad/")) {
+                                    // wait for ad to finish
+                                    if (!currentUrl().startsWith("https://open.spotify.com/ad/")) {
+                                        // wait for a couple seconds in case another ad starts playing
+                                        delay(2.seconds)
+                                        if (!currentUrl().startsWith("https://open.spotify.com/ad/")) {
+                                            trackLength = getTrackLength()
+                                        }
+                                    }
+                                }
+                                if (wasPaused) {
+                                    if (startAt != 0L) {
+                                        println("Moving to position $startPosition.")
+                                        playerctl(getPlayer(), "position", "$startPosition")
+                                        wasPaused = false
+                                    }
+                                    synchronized(this) {
+                                        CoroutineScope(trackJob + IO).launch {
+                                            trackPositionJob.cancel()
+                                            trackPositionJob = Job()
+                                            startCountingTrackPosition(trackPositionJob)
+                                        }
+                                    }
+                                    if (shouldPause) {
+                                        pauseTrack()
+                                    } else {
+                                        wasPaused = false
+                                        listener.onTrackResumed(getPlayer(), track)
+                                    }
+                                }
+                                if (trackPosition == 0L) {
+                                    synchronized(this) {
+                                        CoroutineScope(trackJob + IO).launch {
+                                            if (startAt != 0L) {
+                                                println("Starting playback at position $startPosition.")
+                                                playerctl(getPlayer(), "position", "$startPosition")
+                                            }
+                                            trackPositionJob.cancel()
+                                            trackPositionJob = Job()
+                                            startCountingTrackPosition(trackPositionJob)
+                                        }
+                                    }
+                                    listener.onTrackStarted(getPlayer(), track)
+                                    delay(2.seconds)
+                                }
+                            }
+
+                            "Paused" -> {
+                                if (getPlayer() == "spotify") {
+                                    if (trackPosition >= trackLength - 5) {
+                                        // Song ended
+                                        // Spotify changes playback status to "Paused" right before the song actually ends,
+                                        // so wait for a brief moment so the song has a chance to end properly.
+                                        delay(1495.milliseconds)
+                                        skipTrack()
+                                        break@loop
+                                    } else if (!wasPaused) {
+                                        synchronized(this) {
+                                            trackPositionJob.cancel()
+                                        }
+                                        wasPaused = true
+                                        listener.onTrackPaused(getPlayer(), track)
+                                    }
+                                } else {
+                                    if (!wasPaused) {
+                                        synchronized(this) {
+                                            trackPositionJob.cancel()
+                                        }
+                                        wasPaused = true
+                                        listener.onTrackPaused(getPlayer(), track)
+                                    }
+                                }
+                            }
+
+                            "Stopped" -> {
+                                if (trackPosition >= trackLength - 5) {
+                                    skipTrack()
+                                    break@loop
+                                } else {
+                                    // wait a bit to see if track is actually stopped
+                                    delay(3.seconds)
+                                    if (playerStatus().outputText.contains("Stopped")) {
+                                        println("\nThe current track seems to be stopped even though it hasn't played to the end.")
+                                        // This probably means the user didn't manually stop the player and instead some player-related error
+                                        // happened instead, causing playback to stop.
+                                        // Start playback again and seek to the previous position
+                                        startTrack(trackPosition)
+                                        break@loop
+                                    }
+                                }
+                            }
+
+                            else -> {
+                                if (status.errorText != "Error org.freedesktop.DBus.Error.ServiceUnknown: " +
+                                    "The name org.mpris.MediaPlayer2.${getPlayer()} was not provided by any .service files"
+                                ) {
+                                    println("Player has stopped")
+                                    skipTrack()
+                                } else {
+                                    synchronized(this) {
+                                        trackPositionJob.cancel()
+                                    }
+                                    val msg = "Unhandled Player Status: ${playerStatus().errorText}"
+                                    trackJob.completeExceptionally(Throwable(msg))
+                                    println(msg)
+                                }
+                                break@loop
+                            }
+                        }
+                    } else {
+                        if (trackPosition >= trackLength - 5) {
+                            skipTrack()
+                            break@loop
+                        } else {
+                            println("Something went seriously wrong. Restarting the player and starting the song again.")
+                            killPlayer(getPlayer())
+                            synchronized(songQueue) { songQueue.add(0, track) }
+                            skipTrack()
+                            break@loop
+                        }
+                    }
+                    delay(995.milliseconds)
+                }
+            }
+
+            when (track.link.serviceType()) {
+                ServiceType.SPOTIFY -> {
+                    // first kill mpv in case its running
+                    killPlayer("mpv")
+                    CoroutineScope(IO + synchronized(trackJob) { trackJob }).launch {
+                        openTrack()
+                    }
+                }
+
+                ServiceType.YOUTUBE, ServiceType.SOUNDCLOUD, ServiceType.BANDCAMP -> {
+                    // First kill the spotify player in case its running.
+                    // Although this shouldn't be needed, at least in the case of the official spotify client,
+                    // sometimes it won't respect the disabled autoplay setting, and will continue playing something else
+                    // after the desired track has finished.
+                    if (botSettings.spotifyPlayer == "spotify") {
+                        killPlayer(botSettings.spotifyPlayer)
+                    }
+                    CoroutineScope(IO + synchronized(trackJob) { trackJob }).launch {
+                        openTrack()
+                    }
+                }
+
+                else -> {
+                    println("Link type not supported!\nLink: \"${track.link}\"")
+                }
+            }
+        }
+
+        fun pauseTrack() {
+            if (track.isNotEmpty()) {
+                shouldPause = true
+                playerctl(getPlayer(), "pause")
+            }
+        }
+
+        fun resumeTrack() {
+            if (track.isNotEmpty()) {
+                shouldPause = false
+                refreshPulseAudio()
+                checkTeamSpeakAudio(trackJob)
+                playerctl(getPlayer(), "play")
+            }
+        }
+
+        fun stopTrack() {
+            synchronized(this) {
+                trackPositionJob.cancel()
+                trackJob.cancel()
+            }
+            val player = getPlayer()
+            // try stopping playback in a loop because sometimes just once doesn't seem to be enough
+            while (playerStatus().outputText == "Playing") {
+                playerctl(player, if (player == "spotify") "pause" else "stop")
+            }
+            // if mpv is in use, kill the process
+            if (player == "mpv") {
+                killPlayer(player)
+            }
+            listener.onTrackStopped(player, track)
+        }
+
+        fun skipTrack() {
+            synchronized(this) {
+                trackPositionJob.cancel()
+                trackJob.cancel()
+            }
+            val player = getPlayer()
+            while (playerStatus().outputText == "Playing") {
+                playerctl(player, if (player == "spotify") "pause" else "stop")
+            }
+            if (player == "mpv") {
+                killPlayer(player)
+            }
+            listener.onTrackEnded(player, track)
+        }
+    }
+}
+
+interface PlayStateListener {
+    fun onTrackEnded(
+        player: String,
+        track: Track,
+    )
+
+    fun onTrackPaused(
+        player: String,
+        track: Track,
+    )
+
+    fun onTrackResumed(
+        player: String,
+        track: Track,
+    )
+
+    fun onTrackStarted(
+        player: String,
+        track: Track,
+    )
+
+    fun onTrackStopped(
+        player: String,
+        track: Track,
+    )
+
+    fun onAdPlaying()
 }

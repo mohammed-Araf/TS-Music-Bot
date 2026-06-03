@@ -52,6 +52,7 @@ data class CommandList(
             Pair("sc-playsong", "%sc-playsong"),
             Pair("sc-nowplaying", "%sc-nowplaying"),
             Pair("volume", "%vol"),
+            Pair("ping", "%ping"),
         ).toMutableMap(),
 ) {
     var helpMessages = createHelpMessages()
@@ -580,6 +581,12 @@ data class CommandList(
                     "${commandList["volume"]} 50\n" +
                     "Example - Set volume to max:\n" +
                     "${commandList["volume"]} 100",
+            ),
+            Pair(
+                "ping",
+                "\n" +
+                    "Showing help for ${commandList["ping"]} command:\n" +
+                    "${commandList["ping"]} verifies bot connection latency to the TeamSpeak server.",
             ),
         )
 

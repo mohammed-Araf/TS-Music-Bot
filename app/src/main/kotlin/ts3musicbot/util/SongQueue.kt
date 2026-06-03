@@ -45,6 +45,22 @@ class SongQueue(
     private val trackPlayer = TrackPlayer(botSettings, teamSpeak, spotify, soundCloud, youTube, bandcamp, this)
     private var queueState = State.QUEUE_STOPPED
 
+    enum class LoopMode {
+        OFF,
+        TRACK,
+        QUEUE,
+    }
+
+    private var loopMode = LoopMode.OFF
+
+    fun setLoopMode(mode: LoopMode) {
+        synchronized(this) {
+            loopMode = mode
+        }
+    }
+
+    fun getLoopMode(): LoopMode = synchronized(this) { loopMode }
+
     enum class State {
         QUEUE_PLAYING,
         QUEUE_PAUSED,
@@ -249,7 +265,7 @@ class SongQueue(
         when (getState()) {
             State.QUEUE_PLAYING, State.QUEUE_PAUSED, State.QUEUE_STOPPED -> {
                 CoroutineScope(IO).launch {
-                    if (getQueue().isNotEmpty()) {
+                    if (nowPlaying().isNotEmpty() || getQueue().isNotEmpty()) {
                         println("Skipping current track.")
                         stopQueue()
                         delay(1.seconds)
@@ -352,6 +368,21 @@ class SongQueue(
         player: String,
         track: Track,
     ) {
+        if (track.isNotEmpty()) {
+            when (loopMode) {
+                LoopMode.TRACK -> {
+                    synchronized(songQueue) {
+                        songQueue.add(0, track)
+                    }
+                }
+                LoopMode.QUEUE -> {
+                    synchronized(songQueue) {
+                        songQueue.add(track)
+                    }
+                }
+                LoopMode.OFF -> {}
+            }
+        }
         playStateListener.onTrackEnded(player, track)
         println("Track ended.")
         when (queueState) {

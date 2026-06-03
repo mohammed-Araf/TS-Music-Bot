@@ -130,6 +130,17 @@ class ChatReader(
         val queueSkipCmd = cmdList.commandList["queue-skip"] ?: "${pfx}queue-skip"
         val queueListCmd = cmdList.commandList["queue-list"] ?: "${pfx}queue-list"
 
+        // Rewrite move A B or mv A B to A -p B
+        if (cmd.matches("^${pfx}(mv|move)\\s+([0-9,\\s]+)\\s+(\\d+)$".toRegex())) {
+            val match = "^${pfx}(mv|move)\\s+([0-9,\\s]+)\\s+(\\d+)$".toRegex().find(cmd)
+            if (match != null) {
+                val from = match.groupValues[2].trim()
+                val to = match.groupValues[3].trim()
+                val moveCmd = cmdList.commandList["queue-move"] ?: "${pfx}queue-move"
+                cmd = "$moveCmd $from -p $to"
+            }
+        }
+
         if (cmd.startsWith("${pfx}p ") || cmd.startsWith("${pfx}play ")) {
             val args = cmd.substring(if (cmd.startsWith("${pfx}play ")) (pfx.length + 4) else (pfx.length + 1)).trim()
             if (args.isNotEmpty()) {
@@ -145,12 +156,54 @@ class ChatReader(
             cmd = "$queueAddCmd yt video " + cmd.substring(pfx.length + 3)
         } else if (cmd.startsWith("${pfx}p y ")) {
             cmd = "$queueAddCmd yt video " + cmd.substring(pfx.length + 4)
-        } else if (cmd == "${pfx}stop") {
-            cmd = queueStopCmd
-        } else if (cmd == "${pfx}skip") {
+        } else if (cmd.startsWith("${pfx}skip")) {
             cmd = queueSkipCmd
-        } else if (cmd == "${pfx}list") {
-            cmd = queueListCmd
+        } else if (cmd.startsWith("${pfx}stop")) {
+            cmd = queueStopCmd
+        } else if (cmd.startsWith("${pfx}nowplaying")) {
+            val args = cmd.substring(pfx.length + 10).trim()
+            val npCmd = cmdList.commandList["queue-nowplaying"] ?: "${pfx}queue-nowplaying"
+            cmd = "$npCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}queue")) {
+            val args = cmd.substring(pfx.length + 5).trim()
+            val listCmd = cmdList.commandList["queue-list"] ?: "${pfx}queue-list"
+            cmd = "$listCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}list")) {
+            val args = cmd.substring(pfx.length + 4).trim()
+            val listCmd = cmdList.commandList["queue-list"] ?: "${pfx}queue-list"
+            cmd = "$listCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}volume")) {
+            val args = cmd.substring(pfx.length + 6).trim()
+            val volCmd = cmdList.commandList["volume"] ?: "${pfx}volume"
+            cmd = "$volCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}resume")) {
+            val args = cmd.substring(pfx.length + 6).trim()
+            val resumeCmd = cmdList.commandList["queue-resume"] ?: "${pfx}queue-resume"
+            cmd = "$resumeCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}clear")) {
+            val args = cmd.substring(pfx.length + 5).trim()
+            val clearCmd = cmdList.commandList["queue-clear"] ?: "${pfx}queue-clear"
+            cmd = "$clearCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}remove")) {
+            val args = cmd.substring(pfx.length + 6).trim()
+            val delCmd = cmdList.commandList["queue-delete"] ?: "${pfx}queue-delete"
+            cmd = "$delCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}move")) {
+            val args = cmd.substring(pfx.length + 4).trim()
+            val moveCmd = cmdList.commandList["queue-move"] ?: "${pfx}queue-move"
+            cmd = "$moveCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}sources")) {
+            val args = cmd.substring(pfx.length + 7).trim()
+            val infoCmd = cmdList.commandList["info"] ?: "${pfx}info"
+            cmd = "$infoCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}goto")) {
+            val args = cmd.substring(pfx.length + 4).trim()
+            val gotoCmd = cmdList.commandList["goto"] ?: "${pfx}goto"
+            cmd = "$gotoCmd $args".trim()
+        } else if (cmd.startsWith("${pfx}join")) {
+            val args = cmd.substring(pfx.length + 4).trim()
+            val gotoCmd = cmdList.commandList["goto"] ?: "${pfx}goto"
+            cmd = "$gotoCmd $args".trim()
         }
         return cmd
     }
@@ -233,6 +286,7 @@ class ChatReader(
                         if (tsClient != null) {
                             val bList = tsClient.getBadgeGUIDs()?.toList() ?: emptyList()
                             val gList = tsClient.getServerGroups()?.toList() ?: emptyList()
+                            println("[PERMISSIONS] Checked client ${tsClient.nickname} (ID: $invokerId): Badges=$bList, Groups=$gList")
                             if (perms.cacheBadges) {
                                 permissionsCache[invokerId] = UserPermissionCache(bList, gList, now)
                             }
@@ -2081,22 +2135,33 @@ class ChatReader(
                                 commandJob.complete()
                                 return Pair(true, null)
                             }
-                            // queue-repeat command
-                            commandString.contains(
-                                "^${cmdList.commandList["queue-repeat"]}\\s*((-a|--amount=?)\\s*[0-9]+)?$".toRegex(),
-                            ) -> {
-                                val amount =
-                                    if (commandString.contains("(-a|--amount=?)\\s*[0-9]+".toRegex())) {
-                                        commandString
-                                            .replace(
-                                                "^${cmdList.commandList["queue-repeat"]}\\s*(-a|--amount=?)\\s*".toRegex(),
-                                                "",
-                                            ).toInt()
-                                    } else {
-                                        1
+                            // queue-repeat command (loop command)
+                            commandString.startsWith("${cmdList.commandList["queue-repeat"]}") -> {
+                                val args = commandString.substringAfter("${cmdList.commandList["queue-repeat"]}").trim().lowercase()
+                                val currentMode = songQueue.getLoopMode()
+                                val targetMode = when (args) {
+                                    "queue", "q" -> {
+                                        if (currentMode == SongQueue.LoopMode.QUEUE) SongQueue.LoopMode.OFF else SongQueue.LoopMode.QUEUE
                                     }
-                                val tracks = List(amount) { songQueue.nowPlaying().link.link }.joinToString(",")
-                                executeCommand("${cmdList.commandList["queue-playnext"]} $tracks")
+                                    "off", "none", "false" -> {
+                                        SongQueue.LoopMode.OFF
+                                    }
+                                    "track", "song", "one" -> {
+                                        if (currentMode == SongQueue.LoopMode.TRACK) SongQueue.LoopMode.OFF else SongQueue.LoopMode.TRACK
+                                    }
+                                    "" -> {
+                                        if (currentMode == SongQueue.LoopMode.TRACK) SongQueue.LoopMode.OFF else SongQueue.LoopMode.TRACK
+                                    }
+                                    else -> null
+                                }
+                                if (targetMode != null) {
+                                    songQueue.setLoopMode(targetMode)
+                                    printToChat(listOf("Loop mode set to: ${targetMode.name}"))
+                                } else {
+                                    printToChat(listOf("Invalid loop mode! Use: !loop (to toggle track loop), !loop queue, or !loop off"))
+                                }
+                                commandJob.complete()
+                                return Pair(true, null)
                             }
                             // search command
                             commandString.contains("^${cmdList.commandList["search"]}\\s+".toRegex()) -> {
@@ -2623,7 +2688,7 @@ class ChatReader(
                             }
 
                             // volume command
-                            commandString.contains("^${cmdList.commandList["volume"]}(\\s+\\d+)?$".toRegex()) -> {
+                            commandString.contains("^${cmdList.commandList["volume"]}(\\s+[+-]?\\d+)?$".toRegex()) -> {
                                 val args = commandString.substringAfter("${cmdList.commandList["volume"]}").trim()
                                 if (args.isEmpty()) {
                                     // Get current volume
@@ -2638,20 +2703,51 @@ class ChatReader(
                                     }
                                     printToChat(listOf(message.toString()))
                                 } else {
-                                    val pct = args.toIntOrNull()?.coerceIn(0, 100)
-                                    if (pct == null) {
-                                        printToChat(listOf("Invalid volume! Please enter a number between 0 and 100."))
+                                    val isRelative = args.startsWith("+") || args.startsWith("-")
+                                    val delta = args.toIntOrNull()
+                                    if (delta == null) {
+                                        printToChat(listOf("Invalid volume! Please enter a number or a relative offset (e.g. +15, -10)."))
                                     } else {
-                                        botSettings.ytVolume = pct
-                                        botSettings.scVolume = pct
-                                        botSettings.bcVolume = pct
+                                        val targetVolume = if (isRelative) {
+                                            (botSettings.ytVolume + delta).coerceIn(0, 100)
+                                        } else {
+                                            delta.coerceIn(0, 100)
+                                        }
+                                        botSettings.ytVolume = targetVolume
+                                        botSettings.scVolume = targetVolume
+                                        botSettings.bcVolume = targetVolume
                                         
-                                        playerctl(botSettings.spotifyPlayer, "volume", pct.toString())
-                                        playerctl("mpv", "volume", pct.toString())
+                                        playerctl(botSettings.spotifyPlayer, "volume", targetVolume.toString())
+                                        playerctl("mpv", "volume", targetVolume.toString())
                                         
-                                        printToChat(listOf("Volume set to $pct% for Spotify and YouTube/SoundCloud."))
+                                        printToChat(listOf("Volume set to $targetVolume% for Spotify and YouTube/SoundCloud."))
                                     }
                                 }
+                                commandJob.complete()
+                                return Pair(true, null)
+                            }
+
+                            // ping command
+                            commandString.contains("^${cmdList.commandList["ping"]}$".toRegex()) -> {
+                                var latencyText = ""
+                                try {
+                                    val start = System.currentTimeMillis()
+                                    val reachable = java.net.InetAddress.getByName(botSettings.serverAddress).isReachable(1500)
+                                    val duration = System.currentTimeMillis() - start
+                                    if (reachable) {
+                                        latencyText = " ($duration ms)"
+                                    } else {
+                                        val process = Runtime.getRuntime().exec(arrayOf("ping", "-c", "1", "-W", "1", botSettings.serverAddress))
+                                        val output = process.inputStream.bufferedReader().readText()
+                                        val match = "time=([0-9.]+)".toRegex().find(output)
+                                        if (match != null) {
+                                            latencyText = " (${match.groupValues[1]} ms)"
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    // ignore
+                                }
+                                printToChat(listOf("Pong!$latencyText"))
                                 commandJob.complete()
                                 return Pair(true, null)
                             }

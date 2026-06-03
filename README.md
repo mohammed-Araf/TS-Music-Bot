@@ -57,11 +57,11 @@ Configure connection settings, paths, and player options.
 Example options:
 ```ini
 # Server connection
-serverAddress=172.105.53.24
+serverAddress=127.0.0.1
 serverPort=9987
-channelPath=[cspacer53] ★★★ RAGE Gamers ★★★/🎵 Music & Chill
-channelPassword=1234
-botNickname=Alan's MusicBot
+channelPath=Lobby
+channelPassword=your_channel_password
+botNickname=MusicBot
 
 # Spotify credentials & player selection
 spotifyPlayer=ncspot
@@ -118,8 +118,11 @@ permissions:
 ```
 
 > [!TIP]
-> **Badge IDs vs Server Group IDs**:
-> - `required_badges` accepts **String** values (keys/GUIDs) of badges (e.g. `"vip"`, `"admin"`, `"music_access"`).
+> **Badge GUIDs vs Server Group IDs**:
+> - `required_badges` accepts **String** values representing official TeamSpeak badge GUIDs (which are standard UUID strings like `"0cd924ed-c5ea-459e-b60a-4f1bc0b65f07"` or `"8d843dfa-c51a-407f-87b3-94cfc8f03e96"`). These are not user-defined names.
+> - **How to find Badge GUIDs**: When a user runs a command, the bot prints their active badges and server groups to the console/log output:
+>   `[PERMISSIONS] Checked client PlayerName (ID: 15): Badges=[0cd924ed-c5ea-459e-b60a-4f1bc0b65f07], Groups=[10, 20]`
+>   Administrators can view the bot logs (e.g., via `journalctl -u ts3-musicbot`) to copy the exact badge GUIDs for configuring `permissions.yml`.
 > - `required_server_groups` accepts **Integer** IDs of TeamSpeak server groups (e.g. `10`, `20`).
 
 ---
@@ -213,110 +216,3 @@ sudo systemctl start ts3-musicbot
 sudo journalctl -u ts3-musicbot -f -n 100
 ```
 
----
-
-## TeamSpeak Channel Description BBCode Template
-
-You can copy and paste the BBCode layout below directly into the description of your TeamSpeak music channel to provide a clean commands layout for users:
-
-```bbcode
-[center][b][size=16][color=#FF8C00]🎵 ALAN'S MUSIC BOT 🎵[/color][/size][/b]
-[color=#888888]Premium head-in-process music streaming engine[/color][/center]
-[hr]
-[b][color=#00BFFF]ℹ️ Info:[/color][/b] Everyone can use [b]![/b] commands. Use play command ([i]!p[/i]) with a song name or Spotify/YouTube URL.
-
-[table]
-[tr]
-[td][b][color=#FF8C00]Command[/color][/b]   [/td]
-[td][b][color=#FF8C00]Alias[/color][/b]   [/td]
-[td][b][color=#FF8C00]Usage / Example[/color][/b]   [/td]
-[td][b][color=#FF8C00]Description[/color][/b][/td]
-[/tr]
-[tr]
-[td][b]!play[/b][/td]
-[td]!p[/td]
-[td][i]!p dil[/i] or [i]!p spotify_url[/i][/td]
-[td]Play or queue a song (Spotify/YT/SC)[/td]
-[/tr]
-[tr]
-[td][b]!skip[/b][/td]
-[td]!s[/td]
-[td][i]!s[/i][/td]
-[td]Skip the current playing song[/td]
-[/tr]
-[tr]
-[td][b]!nowplaying[/b][/td]
-[td]!np[/td]
-[td][i]!np[/i][/td]
-[td]Show current playing song details[/td]
-[/tr]
-[tr]
-[td][b]!queue[/b][/td]
-[td]!q[/td]
-[td][i]!q[/i][/td]
-[td]Print the list of queued songs[/td]
-[/tr]
-[tr]
-[td][b]!volume[/b][/td]
-[td]!v[/td]
-[td][i]!v 50[/i] or [i]!v +15[/i][/td]
-[td]Adjust bot volume (0-100)[/td]
-[/tr]
-[tr]
-[td][b]!pause[/b][/td]
-[td]!pause[/td]
-[td][i]!pause[/i][/td]
-[td]Pause song playback[/td]
-[/tr]
-[tr]
-[td][b]!resume[/b][/td]
-[td]!r[/td]
-[td][i]!r[/i][/td]
-[td]Resume paused playback[/td]
-[/tr]
-[tr]
-[td][b]!loop[/b][/td]
-[td]!loop[/td]
-[td][i]!loop[/i] or [i]!loop queue[/i][/td]
-[td]Loop current song / entire queue[/td]
-[/tr]
-[tr]
-[td][b]!clear[/b][/td]
-[td]!c[/td]
-[td][i]!c[/i][/td]
-[td]Clear all queued songs[/td]
-[/tr]
-[tr]
-[td][b]!remove[/b][/td]
-[td]!rm[/td]
-[td][i]!rm 3[/i][/td]
-[td]Remove song at index from queue[/td]
-[/tr]
-[tr]
-[td][b]!move[/b][/td]
-[td]!mv[/td]
-[td][i]!mv 3 1[/i][/td]
-[td]Move song in queue from position A to B[/td]
-[/tr]
-[tr]
-[td][b]!sources[/b][/td]
-[td]!src[/td]
-[td][i]!src[/i][/td]
-[td]Check status of music providers[/td]
-[/tr]
-[tr]
-[td][b]!join[/b][/td]
-[td]!join[/td]
-[td][i]!join Music Room[/i][/td]
-[td]Move bot to a different channel[/td]
-[/tr]
-[tr]
-[td][b]!ping[/b][/td]
-[td]!ping[/td]
-[td][i]!ping[/i][/td]
-[td]Verify bot connection latency[/td]
-[/tr]
-[/table]
-[hr]
-[center][color=#888888]💡 Tip: Keep search terms simple (e.g. "Artist - Track") for best results.[/color][/center]
-```

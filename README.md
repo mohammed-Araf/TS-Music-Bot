@@ -70,7 +70,7 @@ spotifyPassword=your_password
 ```
 
 ### 2. Custom Commands (`commands.config`)
-Modify this file to customize prefixes and command bindings. The default configured mapping from the plan is:
+Modify this file to customize prefixes and command bindings. The default configured mapping is:
 ```ini
 COMMAND_PREFIX=!
 QUEUE_PLAYNOW=p
@@ -87,6 +87,34 @@ VOLUME=v
 QUEUE_REPEAT=loop
 QUEUE_NOWPLAYING=np
 INFO=src
+```
+
+### 3. User Permissions Configuration (`permissions.yml`)
+Enable badge-based validation for controlling commands and specify which commands are publicly accessible:
+```yaml
+permissions:
+  # Enable or disable the entire permissions module
+  enabled: true
+
+  # List of badges required to execute restricted/music control commands
+  required_badges:
+    - "music_access"
+    - "vip"
+    - "admin"
+
+  # Cache badges locally to prevent querying the TS3 server on every command
+  cache_badges: true
+  cache_ttl_seconds: 300
+
+  # Message sent to the channel when a user attempts a restricted command without permission
+  deny_message: "You are not allowed to use music commands."
+
+  # Commands that can be executed by anyone, regardless of badges/groups
+  public_commands:
+    - "np"
+    - "q"
+    - "src"
+    - "ping"
 ```
 
 ---

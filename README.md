@@ -1,46 +1,181 @@
-TS3 MusicBot lets you control and listen to your music from a TeamSpeak server's channel via the chat.<br>
-<br>
-TS3 MusicBot can play music from Spotify, YouTube, SoundCloud and Bandcamp. Support for other services possibly coming in the future.<br>
-TS3 MusicBot doesn't require you to be an admin on the server you are using the bot on, you only need permission to speak in the desired channel and use the chat.<br>
-<br>
-<h4>Features:</h4>
+# TeamSpeak 3 Spotify Music Bot
 
-- Spotify Support! Unlike other bots, this Spotify support is legit!*<br>
-- YouTube Support.<br>
-- SoundCloud Support.<br>
-- Bandcamp Support.
-- Built in Spotify, YouTube and SoundCloud search.<br>
-- You can have tracks from Spotify, YouTube, SoundCloud and Bandcamp all in the same queue!<br>
-- Supports adding multiple tracks, albums and playlists etc. to the queue simultaneously.<br>
-- Add whole playlists to the queue. This is something that isn't possible even in the official Spotify client!<br>
-- Supports adding a Spotify artist's top tracks to the queue.<br>
-- You can easily add content to the start, or the end of the song queue, or at any position you want!<br>
-- Supports pre-shuffling. This makes it possible for example, to shuffle a playlist before it gets added to the queue. This is very useful if you don't want to shuffle the whole song queue!<br>
-- Supports ncspot! If you don't want to use the official Spotify client, you can use ncspot, which is a lot lighter on system resources, but it requires a Spotify premium account.<br>
-- And more...
-<br>
-<h4>Requirements:</h4>
+An ultra-lightweight, streaming-only TeamSpeak 3 music bot optimized for Linux/macOS environments (such as VPS instances). It plays music directly from Spotify Premium using `ncspot` or the official Spotify client, routed through a PulseAudio virtual loopback device directly into the official TeamSpeak 3 desktop client.
 
-- Linux based OS in a virtual machine or spare computer.<br>
-- Works on Windows via WSL2, but configuration is harder than just installing an actual Linux OS.<br>
-- MacOS might work if you install dependencies via homebrew, but this hasn't been tested.<br>
+> [!IMPORTANT]
+> This bot does **never download tracks**. It streams audio in real-time, resulting in minimal CPU usage (<15% when playing) and memory overhead, making it ideal for 1 GB RAM VPS environments.
 
-<h4>Installation:</h4>
-Go to [Wiki](https://gitlab.com/Bettehem/ts3-musicbot/wikis/home) for instructions on installation.<br>
-<br>
-<h4>Commands:</h4>
+---
 
-- All commands start with the "%" character. You have to enter these in the chat of the channel your bot is connected to.<br>
-- Check Command List wiki page for a list of commands: https://gitlab.com/Bettehem/ts3-musicbot/wikis/command-list<br>
+## Key Features
 
-<br>
-<br>
-<br>
-<br>
+* **Legitimate Spotify Streaming**: Streams music directly from Spotify Premium (using the Spotify API for metadata and `ncspot` as the backend player).
+* **Smart Command Routing**:
+  * **`!p <query>`**: Automatically plays a search query or link immediately if the queue is stopped.
+  * **`!play <query>`**: Queues the track if a song is currently playing.
+  * **Dynamic Selection**: Both commands dynamically route based on active playback state so users get expected behavior (instant play vs. queue addition).
+* **Spotify Search Defaults**: Plain text search queries (e.g. `!p Alan Walker Faded`) automatically resolve to a Spotify search (`sp track ...`) without needing explicit prefixes.
+* **Custom Command Configuration**: Supports mapping any command to a custom trigger name and prefix via a configuration file.
+* **Multi-Service Support**: Streams Spotify natively, and supports SoundCloud, YouTube, and Bandcamp playbacks via `mpv` routing.
+* **Pre-Shuffling**: Allows shuffling albums and playlists before adding them to the queue to avoid shuffling the entire playback history.
 
-*Other bots which claim to support Spotify, will only search for a song's data on Spotify, then enter it in a YouTube search and play the first result. This is especially problematic if you're trying to play a Spotify song that doesn't exist on YouTube. What you will get is a random video (not your song!) that might just have a similar name as your song. And even if the bot happens to find the correct match for your song on YouTube, the audio quality might still be a lot worse on YouTube than on Spotify.<br>
-This problem doesn't exist on this bot, as it will search for the relevant Spotify data using their API, and then uses either the official Spotify client, or if the user so chooses, ncspot to play the songs straight from Spotify.<br>
-<br>
-If you like my work and feel like it's worth your money, you can donate via PayPal. More options may come in the future. Thanks for your support!<br>
-[![Support via PayPal](https://cdn.rawgit.com/twolfson/paypal-github-button/1.0.0/dist/button.svg)](https://www.paypal.me/Bettehem/)
+---
 
+## Architecture Flow
+
+```mermaid
+graph TD
+    User["TeamSpeak Channel Chat"] -->|!p Alan Walker Faded| BotJar["TS3 MusicBot (Java/Kotlin)"]
+    BotJar -->|Parse & Preprocess| BotJar
+    BotJar -->|Spotify Web API| Metadata["Fetch track link"]
+    BotJar -->|MPRIS / D-Bus| Ncspot["ncspot (Spotify Premium Player in tmux)"]
+    Ncspot -->|Plays Stream| PulseAudio["PulseAudio Loopback Device"]
+    PulseAudio -->|Capture Monitor| TS3Client["TS3 Desktop Client (running inside Xvfb)"]
+    TS3Client -->|Transmit Voice| TS3Server["TeamSpeak 3 Server Channel"]
+```
+
+---
+
+## Dependencies & Prerequisites
+
+To run this bot (GUI-controller mode), your server/host machine requires:
+
+* **Java Runtime**: JDK 17 or higher.
+* **OpenJFX**: JavaFX platform libraries (typically `/usr/share/openjfx/lib`).
+* **PulseAudio**: Virtual loopback device for capturing system output.
+* **Xvfb**: X Virtual Framebuffer (to run the GUI TeamSpeak 3 client headlessly on headless servers).
+* **tmux**: Terminal multiplexer to run `ncspot` in a background workspace.
+* **ncspot**: A ncurses-based Spotify client (requires a Spotify Premium subscription).
+* **TeamSpeak 3 Client**: Official desktop client (Linux amd64).
+
+---
+
+## Configuration Files
+
+### 1. Bot Settings (`ts3-musicbot.config`)
+Configure connection settings, paths, and player options.
+Example options:
+```ini
+# Server connection
+serverAddress=172.105.53.24
+serverPort=9987
+channelPath=[cspacer53] ★★★ RAGE Gamers ★★★/🎵 Music & Chill
+channelPassword=1234
+botNickname=Alan's MusicBot
+
+# Spotify credentials & player selection
+spotifyPlayer=ncspot
+spotifyUsername=your_username
+spotifyPassword=your_password
+```
+
+### 2. Custom Commands (`commands.config`)
+Modify this file to customize prefixes and command bindings. The default configured mapping from the plan is:
+```ini
+COMMAND_PREFIX=!
+QUEUE_PLAYNOW=p
+QUEUE_ADD=play
+QUEUE_SKIP=s
+QUEUE_STOP=stop
+QUEUE_PAUSE=pause
+QUEUE_RESUME=r
+QUEUE_LIST=q
+QUEUE_CLEAR=c
+QUEUE_DELETE=rm
+QUEUE_MOVE=mv
+VOLUME=v
+QUEUE_REPEAT=loop
+QUEUE_NOWPLAYING=np
+INFO=src
+```
+
+---
+
+## Starting the Bot
+
+To start the environment, load the D-Bus session, spin up PulseAudio/Xvfb, and run the JAR with configs, execute the startup script `run-bot.sh`:
+
+```bash
+#!/bin/bash
+set -e
+
+# Setup User D-Bus session environment (required for ncspot MPRIS controls)
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+
+# Initialize PulseAudio
+pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+sleep 2
+
+# Spawn virtual display frame on display :99 for TS3 GUI
+Xvfb :99 -screen 0 1024x768x24 &
+sleep 2
+export DISPLAY=:99
+
+# Run the Bot with Config overrides
+java --module-path /usr/share/openjfx/lib \
+     --add-modules javafx.controls,javafx.fxml \
+     -jar ts3-musicbot.jar \
+     --config ts3-musicbot.config \
+     --command-config commands.config
+```
+
+---
+
+## Commands Reference
+
+The following commands are available inside the channel chat where the bot is connected (using the `!` prefix as mapped in `commands.config`):
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| **`!p`** | `<query / link>` | Smart Play: Plays track immediately if idle (translated to `queue-playnow`). Defaults plain text queries to Spotify. |
+| **`!play`** | `<query / link>` | Smart Queue: Appends track to the queue if playing (translated to `queue-add`). Defaults plain text queries to Spotify. |
+| **`!s`** | None | Skips the current track in the queue. |
+| **`!stop`** | None | Stops queue and clears active playback. |
+| **`!pause`** | None | Pauses playback. |
+| **`!r`** | None | Resumes playback. |
+| **`!q`** | None | Lists the next 15 tracks in the queue. |
+| **`!c`** | None | Clears all tracks from the queue. |
+| **`!rm`** | `<position>` | Deletes the track at the specified index (0-indexed). |
+| **`!mv`** | `<from> -p <to>` | Moves a track from index `<from>` to index `<to>`. |
+| **`!v`** | `<0-100>` | Sets playback volume. |
+| **`!loop`** | `<amount>` | Queues the currently playing track `<amount>` times. |
+| **`!np`** | None | Displays detailed information about the currently playing song. |
+| **`!src`** | `<query / link>` | Displays source/metadata information for a search query. |
+
+---
+
+## Deploying as a systemd Service (VPS)
+
+You can run the bot persistently in the background on your VPS using systemd.
+
+1. Create a service file `/etc/systemd/system/ts3-musicbot.service`:
+```ini
+[Unit]
+Description=TeamSpeak 3 Music Bot (Alan's Music bot Alpha)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/run-bot.sh
+Restart=on-failure
+RestartSec=10
+User=ubuntu
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+2. Reload systemd daemon and start/enable the service:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable ts3-musicbot
+sudo systemctl start ts3-musicbot
+```
+
+3. Monitor logs in real-time:
+```bash
+sudo journalctl -u ts3-musicbot -f -n 100
+```

@@ -2,6 +2,8 @@ permissions:
   enabled: true
   required_badges:
     - "50"
+  required_server_groups:
+    - 50
   cache_badges: true
   cache_ttl_seconds: 300
   deny_message: "You are not allowed to use music commands."

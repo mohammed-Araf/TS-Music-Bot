@@ -268,7 +268,7 @@ class ChatReader(
             val commandJob = Job()
             CoroutineScope(IO + commandJob).launch {
                 fun checkPermission(commandString: String): Boolean {
-                    if (latestMsgUsername == "__console__" || invokerId == -1) return true
+                    if (latestMsgUsername == "__console__") return true
                     val perms = permissionsConfig
                     if (!perms.enabled) return true
 
@@ -278,6 +278,12 @@ class ChatReader(
 
                     if (perms.publicCommands.contains(cmdName)) return true
 
+                    if (invokerId == -1) {
+                        println("[PERMISSIONS] Denied command '$commandString' because client ID could not be resolved.")
+                        printToChat(listOf(perms.denyMessage))
+                        return false
+                    }
+
                     if (perms.requiredBadges.isEmpty() && perms.requiredServerGroups.isEmpty()) return true
 
                     val now = System.currentTimeMillis()
@@ -285,18 +291,28 @@ class ChatReader(
                     val (badges, serverGroups) = if (cacheEntry != null && now - cacheEntry.cachedAt < perms.cacheTtlSeconds * 1000L) {
                         Pair(cacheEntry.badges, cacheEntry.serverGroups)
                     } else {
-                        val tsClient = if (client is TeamSpeak) client.getClientInfo(invokerId) else null
-                        if (tsClient != null) {
-                            val bList = tsClient.getBadgeGUIDs()?.toList() ?: emptyList()
-                            val gList = tsClient.getServerGroups()?.toList() ?: emptyList()
-                            println("[PERMISSIONS] Checked client ${tsClient.nickname} (ID: $invokerId): Badges=$bList, Groups=$gList")
-                            if (perms.cacheBadges) {
-                                permissionsCache[invokerId] = UserPermissionCache(bList, gList, now)
+                        val (bList, gList) = when (client) {
+                            is TeamSpeak -> {
+                                val tsClient = client.getClientInfo(invokerId)
+                                if (tsClient != null) {
+                                    Pair(tsClient.getBadgeGUIDs()?.toList() ?: emptyList(), tsClient.getServerGroups()?.toList() ?: emptyList())
+                                } else Pair(emptyList(), emptyList())
                             }
-                            Pair(bList, gList)
-                        } else {
-                            Pair(emptyList(), emptyList())
+                            is OfficialTSClient -> {
+                                Pair(client.getClientBadges(invokerId), client.getClientServerGroups(invokerId))
+                            }
+                            else -> Pair(emptyList(), emptyList())
                         }
+                        val nickname = when (client) {
+                            is TeamSpeak -> client.getClientInfo(invokerId)?.nickname ?: "Unknown"
+                            is OfficialTSClient -> latestMsgUsername.removeSurrounding("\"")
+                            else -> "Unknown"
+                        }
+                        println("[PERMISSIONS] Checked client $nickname (ID: $invokerId): Badges=$bList, Groups=$gList")
+                        if (perms.cacheBadges) {
+                            permissionsCache[invokerId] = UserPermissionCache(bList, gList, now)
+                        }
+                        Pair(bList, gList)
                     }
 
                     val hasBadge = perms.requiredBadges.any { req -> badges.contains(req) }
@@ -2836,8 +2852,16 @@ class ChatReader(
                             // extract message
                             if (line.startsWith("<")) {
                                 latestMsgUsername = line.substringAfter("> ").substringBeforeLast(": ")
+                                val cleanUsername = latestMsgUsername.removeSurrounding("\"")
+                                if (cleanUsername == botSettings.nickname) return
                                 val userMessage = line.substringAfter("$latestMsgUsername: ")
-                                parseLine(userMessage)
+                                val clientsList = client.getClientList()
+                                val clid = clientsList.firstOrNull {
+                                    val nickname = it.substringAfter("client_nickname=").substringBefore(" ")
+                                    val decodedNick = nickname.replace("\\s", " ")
+                                    decodedNick == cleanUsername
+                                }?.substringAfter("clid=")?.substringBefore(" ")?.toIntOrNull() ?: -1
+                                parseLine(userMessage, clid)
                                 withContext(IO) {
                                     onChatUpdateListener.onChatUpdated(ChatUpdate(latestMsgUsername, userMessage))
                                 }

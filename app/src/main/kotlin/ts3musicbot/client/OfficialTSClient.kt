@@ -881,4 +881,20 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             restartClient()
         }
     }
+
+    fun getClientBadges(clientId: Int): List<String> {
+        val response = clientQuery("clientvariable clid=$clientId client_badges").lines()
+        val line = response.firstOrNull { it.startsWith("clid=") && it.contains("client_badges=") } ?: return emptyList()
+        val badgesStr = line.substringAfter("client_badges=").trim()
+        if (badgesStr.isEmpty()) return emptyList()
+        return badgesStr.split(":").map { it.substringBefore("=") }.filter { it.isNotEmpty() }
+    }
+
+    fun getClientServerGroups(clientId: Int): List<Int> {
+        val response = clientQuery("clientvariable clid=$clientId client_servergroups").lines()
+        val line = response.firstOrNull { it.startsWith("clid=") && it.contains("client_servergroups=") } ?: return emptyList()
+        val groupsStr = line.substringAfter("client_servergroups=").trim()
+        if (groupsStr.isEmpty()) return emptyList()
+        return groupsStr.split(",").mapNotNull { it.trim().toIntOrNull() }
+    }
 }

@@ -60,6 +60,8 @@ class ChatReader(
     private val voteSkipUsers = ArrayList<Pair<String, Boolean>>()
     private val trackCache = ArrayList<Pair<Link, TrackList>>()
     var latestMsgUsername = ""
+    private val permissionsCache = java.util.concurrent.ConcurrentHashMap<Int, UserPermissionCache>()
+    private val permissionsConfig = ts3musicbot.util.PermissionsConfig.load(java.io.File("permissions.yml"))
 
     @Volatile
     private var songQueue = SongQueue(botSettings, client, spotify, soundCloud, youTube, bandcamp, this)
@@ -163,7 +165,7 @@ class ChatReader(
                     object : TS3Listener {
                         override fun onTextMessage(e: TextMessageEvent?) {
                             CoroutineScope(IO).launch {
-                                e?.let { chatUpdated(it.message, it.invokerName) }
+                                e?.let { chatUpdated(it.message, it.invokerName, it.invokerId) }
                             }
                         }
                     },
@@ -204,11 +206,50 @@ class ChatReader(
      * Parses the new line in the chat file and runs it if it's a command.
      * @param message the message/command that should be parsed
      */
-    fun parseLine(message: String) {
+    fun parseLine(message: String, invokerId: Int = -1) {
         // check if message is a command
         if ((message.startsWith(cmdList.commandPrefix) || message.startsWith("%")) && message.length > 1) {
             val commandJob = Job()
             CoroutineScope(IO + commandJob).launch {
+                fun checkPermission(commandString: String): Boolean {
+                    if (latestMsgUsername == "__console__" || invokerId == -1) return true
+                    val perms = permissionsConfig
+                    if (!perms.enabled) return true
+
+                    val pfx = if (commandString.startsWith(cmdList.commandPrefix)) cmdList.commandPrefix else "%"
+                    val cmdBody = if (commandString.startsWith(pfx)) commandString.substring(pfx.length).trim() else commandString.trim()
+                    val cmdName = cmdBody.substringBefore(" ").trim().lowercase()
+
+                    if (perms.publicCommands.contains(cmdName)) return true
+
+                    if (perms.requiredBadges.isEmpty() && perms.requiredServerGroups.isEmpty()) return true
+
+                    val now = System.currentTimeMillis()
+                    val cacheEntry = permissionsCache[invokerId]
+                    val (badges, serverGroups) = if (cacheEntry != null && now - cacheEntry.cachedAt < perms.cacheTtlSeconds * 1000L) {
+                        Pair(cacheEntry.badges, cacheEntry.serverGroups)
+                    } else {
+                        val tsClient = if (client is TeamSpeak) client.getClientInfo(invokerId) else null
+                        if (tsClient != null) {
+                            val bList = tsClient.getBadgeGUIDs()?.toList() ?: emptyList()
+                            val gList = tsClient.getServerGroups()?.toList() ?: emptyList()
+                            if (perms.cacheBadges) {
+                                permissionsCache[invokerId] = UserPermissionCache(bList, gList, now)
+                            }
+                            Pair(bList, gList)
+                        } else {
+                            Pair(emptyList(), emptyList())
+                        }
+                    }
+
+                    val hasBadge = perms.requiredBadges.any { req -> badges.contains(req) }
+                    val hasGroup = perms.requiredServerGroups.any { req -> serverGroups.contains(req) }
+
+                    if (hasBadge || hasGroup) return true
+
+                    printToChat(listOf(perms.denyMessage))
+                    return false
+                }
                 suspend fun startSpotifyPlayer() {
                     fun killCommand() =
                         when (botSettings.spotifyPlayer) {
@@ -305,6 +346,10 @@ class ChatReader(
                  */
                 suspend fun executeCommand(rawCommandString: String): Pair<Boolean, Any?> {
                     var commandString = preprocessCommand(rawCommandString)
+                    if (!checkPermission(commandString)) {
+                        commandJob.complete()
+                        return Pair(false, "Permission denied")
+                    }
                     // parse and execute commands
                     if (cmdList.commandList.any { commandString.startsWith(it.value) } || commandString.startsWith("%help")) {
                         println("Running command $commandString")
@@ -2676,12 +2721,13 @@ class ChatReader(
     private suspend fun chatUpdated(
         line: String,
         userName: String = "",
+        invokerId: Int = -1,
     ) {
         try {
             when (client) {
                 is TeamSpeak ->
                     withContext(IO) {
-                        parseLine(line)
+                        parseLine(line, invokerId)
                         onChatUpdateListener.onChatUpdated(ChatUpdate(userName, line))
                     }
 

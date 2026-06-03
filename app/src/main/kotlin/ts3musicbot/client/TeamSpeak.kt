@@ -102,6 +102,8 @@ class TeamSpeak(botSettings: BotSettings) : Client(botSettings), TS3Listener {
             )
         }
 
+    fun getClientInfo(clientId: Int) = clientSocket.getClientInfo(clientId)
+
     /**
      * get a channel's id
      * @param channelName path to channel

@@ -1,7 +1,6 @@
 permissions:
   enabled: true
-  required_badges:
-    - "50"
+  required_badges: []
   required_server_groups:
     - 50
   cache_badges: true

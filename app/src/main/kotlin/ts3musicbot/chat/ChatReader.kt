@@ -288,7 +288,7 @@ class ChatReader(
 
                     val now = System.currentTimeMillis()
                     val cacheEntry = permissionsCache[invokerId]
-                    val (badges, serverGroups) = if (cacheEntry != null && now - cacheEntry.cachedAt < perms.cacheTtlSeconds * 1000L) {
+                    val (badges, serverGroups) = if (perms.cacheBadges && cacheEntry != null && now - cacheEntry.cachedAt < perms.cacheTtlSeconds * 1000L) {
                         Pair(cacheEntry.badges, cacheEntry.serverGroups)
                     } else {
                         val (bList, gList) = when (client) {
@@ -318,8 +318,14 @@ class ChatReader(
                     val hasBadge = perms.requiredBadges.any { req -> badges.contains(req) }
                     val hasGroup = perms.requiredServerGroups.any { req -> serverGroups.contains(req) }
 
-                    if (hasBadge || hasGroup) return true
+                    println("[PERMISSIONS] Evaluating '$commandString' for client (ID: $invokerId): hasBadge=$hasBadge (userBadges=$badges, reqBadges=${perms.requiredBadges}), hasGroup=$hasGroup (userGroups=$serverGroups, reqGroups=${perms.requiredServerGroups})")
 
+                    if (hasBadge || hasGroup) {
+                        println("[PERMISSIONS] Allowed command '$commandString' for client (ID: $invokerId)")
+                        return true
+                    }
+
+                    println("[PERMISSIONS] Denied command '$commandString' for client (ID: $invokerId) because neither badge nor server group matched.")
                     printToChat(listOf(perms.denyMessage))
                     return false
                 }

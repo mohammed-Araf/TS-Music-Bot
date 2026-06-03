@@ -14,7 +14,11 @@ class PermissionsConfig {
     companion object {
         fun load(file: File): PermissionsConfig {
             val config = PermissionsConfig()
-            if (!file.exists()) return config
+            println("[PERMISSIONS] Loading permissions configuration from: ${file.absolutePath}")
+            if (!file.exists()) {
+                println("[PERMISSIONS] Permissions file does not exist at: ${file.absolutePath}. Using default disabled config.")
+                return config
+            }
             
             var currentKey = ""
             
@@ -73,6 +77,7 @@ class PermissionsConfig {
                     }
                 }
             }
+            println("[PERMISSIONS] Config loaded successfully: enabled=${config.enabled}, badges=${config.requiredBadges}, groups=${config.requiredServerGroups}, publicCommands=${config.publicCommands}, denyMessage=\"${config.denyMessage}\"")
             return config
         }
     }

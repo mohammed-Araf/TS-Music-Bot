@@ -124,6 +124,9 @@ class ChatReader(
         var cmd = commandString.trim()
         val pfx = if (cmd.startsWith(cmdList.commandPrefix)) cmdList.commandPrefix else "%"
         
+        fun String.startsWithWord(word: String): Boolean =
+            this.startsWith("$word ") || this == word
+
         val queueAddCmd = cmdList.commandList["queue-add"] ?: "${pfx}queue-add"
         val queuePlaynowCmd = cmdList.commandList["queue-playnow"] ?: "${pfx}queue-playnow"
         val queueStopCmd = cmdList.commandList["queue-stop"] ?: "${pfx}queue-stop"
@@ -156,52 +159,52 @@ class ChatReader(
             cmd = "$queueAddCmd yt video " + cmd.substring(pfx.length + 3)
         } else if (cmd.startsWith("${pfx}p y ")) {
             cmd = "$queueAddCmd yt video " + cmd.substring(pfx.length + 4)
-        } else if (cmd.startsWith("${pfx}skip")) {
+        } else if (cmd.startsWithWord("${pfx}skip")) {
             cmd = queueSkipCmd
-        } else if (cmd.startsWith("${pfx}stop")) {
+        } else if (cmd.startsWithWord("${pfx}stop")) {
             cmd = queueStopCmd
-        } else if (cmd.startsWith("${pfx}nowplaying")) {
-            val args = cmd.substring(pfx.length + 10).trim()
+        } else if (cmd.startsWithWord("${pfx}nowplaying")) {
+            val args = if (cmd == "${pfx}nowplaying") "" else cmd.substring(pfx.length + 11).trim()
             val npCmd = cmdList.commandList["queue-nowplaying"] ?: "${pfx}queue-nowplaying"
             cmd = "$npCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}queue")) {
-            val args = cmd.substring(pfx.length + 5).trim()
+        } else if (cmd.startsWithWord("${pfx}queue")) {
+            val args = if (cmd == "${pfx}queue") "" else cmd.substring(pfx.length + 6).trim()
             val listCmd = cmdList.commandList["queue-list"] ?: "${pfx}queue-list"
             cmd = "$listCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}list")) {
-            val args = cmd.substring(pfx.length + 4).trim()
+        } else if (cmd.startsWithWord("${pfx}list")) {
+            val args = if (cmd == "${pfx}list") "" else cmd.substring(pfx.length + 5).trim()
             val listCmd = cmdList.commandList["queue-list"] ?: "${pfx}queue-list"
             cmd = "$listCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}volume")) {
-            val args = cmd.substring(pfx.length + 6).trim()
+        } else if (cmd.startsWithWord("${pfx}volume")) {
+            val args = if (cmd == "${pfx}volume") "" else cmd.substring(pfx.length + 7).trim()
             val volCmd = cmdList.commandList["volume"] ?: "${pfx}volume"
             cmd = "$volCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}resume")) {
-            val args = cmd.substring(pfx.length + 6).trim()
+        } else if (cmd.startsWithWord("${pfx}resume")) {
+            val args = if (cmd == "${pfx}resume") "" else cmd.substring(pfx.length + 7).trim()
             val resumeCmd = cmdList.commandList["queue-resume"] ?: "${pfx}queue-resume"
             cmd = "$resumeCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}clear")) {
-            val args = cmd.substring(pfx.length + 5).trim()
+        } else if (cmd.startsWithWord("${pfx}clear")) {
+            val args = if (cmd == "${pfx}clear") "" else cmd.substring(pfx.length + 6).trim()
             val clearCmd = cmdList.commandList["queue-clear"] ?: "${pfx}queue-clear"
             cmd = "$clearCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}remove")) {
-            val args = cmd.substring(pfx.length + 6).trim()
+        } else if (cmd.startsWithWord("${pfx}remove")) {
+            val args = if (cmd == "${pfx}remove") "" else cmd.substring(pfx.length + 7).trim()
             val delCmd = cmdList.commandList["queue-delete"] ?: "${pfx}queue-delete"
             cmd = "$delCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}move")) {
-            val args = cmd.substring(pfx.length + 4).trim()
+        } else if (cmd.startsWithWord("${pfx}move")) {
+            val args = if (cmd == "${pfx}move") "" else cmd.substring(pfx.length + 5).trim()
             val moveCmd = cmdList.commandList["queue-move"] ?: "${pfx}queue-move"
             cmd = "$moveCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}sources")) {
-            val args = cmd.substring(pfx.length + 7).trim()
+        } else if (cmd.startsWithWord("${pfx}sources")) {
+            val args = if (cmd == "${pfx}sources") "" else cmd.substring(pfx.length + 8).trim()
             val infoCmd = cmdList.commandList["info"] ?: "${pfx}info"
             cmd = "$infoCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}goto")) {
-            val args = cmd.substring(pfx.length + 4).trim()
+        } else if (cmd.startsWithWord("${pfx}goto")) {
+            val args = if (cmd == "${pfx}goto") "" else cmd.substring(pfx.length + 5).trim()
             val gotoCmd = cmdList.commandList["goto"] ?: "${pfx}goto"
             cmd = "$gotoCmd $args".trim()
-        } else if (cmd.startsWith("${pfx}join")) {
-            val args = cmd.substring(pfx.length + 4).trim()
+        } else if (cmd.startsWithWord("${pfx}join")) {
+            val args = if (cmd == "${pfx}join") "" else cmd.substring(pfx.length + 5).trim()
             val gotoCmd = cmdList.commandList["goto"] ?: "${pfx}goto"
             cmd = "$gotoCmd $args".trim()
         }

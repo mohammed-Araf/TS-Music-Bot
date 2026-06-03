@@ -96,11 +96,8 @@ permissions:
   # Enable or disable the entire permissions module
   enabled: true
 
-  # List of badges required to execute restricted/music control commands
-  required_badges:
-    - "music_access"
-    - "vip"
-    - "admin"
+  # List of badges required to execute restricted/music control commands (set to [] to ignore global badges)
+  required_badges: []
 
   # List of numeric server group IDs allowed to execute restricted/music control commands
   required_server_groups:

@@ -102,9 +102,14 @@ permissions:
     - "vip"
     - "admin"
 
+  # List of numeric server group IDs allowed to execute restricted/music control commands
+  required_server_groups:
+    - 50
+    - 100
+
   # Cache badges locally to prevent querying the TS3 server on every command
   cache_badges: true
-  cache_ttl_seconds: 300
+  cache_ttl_seconds: 5
 
   # Message sent to the channel when a user attempts a restricted command without permission
   deny_message: "You are not allowed to use music commands."

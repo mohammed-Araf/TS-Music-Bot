@@ -53,6 +53,7 @@ data class CommandList(
             Pair("sc-nowplaying", "%sc-nowplaying"),
             Pair("volume", "%vol"),
             Pair("ping", "%ping"),
+            Pair("restart", "%restart"),
         ).toMutableMap(),
 ) {
     var helpMessages = createHelpMessages()
@@ -87,6 +88,7 @@ data class CommandList(
                     "${commandList["lyrics"]}                                      -Shows lyrics for the currently playing track.\n" +
                     "${commandList["goto"]} <channelpath> -p <channelpassword>     -Move the bot to a different channel.\n" +
                     "${commandList["return"]}                                      -Return the bot back to the original channel.\n" +
+                    "${commandList["restart"]}                                     -Restarts the background music player if it freezes.\n" +
                     "\n\n" +
                     "Player specific commands:\n" +
                     "(These aren't normally needed. Using the commands above is recommended instead)\n" +
@@ -587,6 +589,12 @@ data class CommandList(
                 "\n" +
                     "Showing help for ${commandList["ping"]} command:\n" +
                     "${commandList["ping"]} verifies bot connection latency to the TeamSpeak server.",
+            ),
+            Pair(
+                "restart",
+                "\n" +
+                    "Showing help for ${commandList["restart"]} command:\n" +
+                    "${commandList["restart"]} restarts the background player (e.g. ncspot) to fix playback freezes.",
             ),
         )
 

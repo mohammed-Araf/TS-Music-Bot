@@ -497,6 +497,40 @@ class ChatReader(
                                 }
                             }
 
+                            // restart command
+                            commandString.contains(
+                                "^(${cmdList.commandList["restart"]})$".toRegex(),
+                            ) -> {
+                                printToChat(listOf("Restarting background music player, please wait..."))
+                                try {
+                                    val target = botSettings.spotifyPlayer
+                                    try {
+                                        playerctl(target, "stop")
+                                    } catch (e: Exception) {
+                                        // ignore
+                                    }
+                                    commandRunner.runCommand(
+                                        "tmux kill-session -t $target",
+                                        ignoreOutput = true,
+                                    )
+                                    commandRunner.runCommand("pkill -9 mpv", ignoreOutput = true)
+                                    delay(500.milliseconds)
+                                    
+                                    if (target == "ncspot" || target == "spotify_player") {
+                                        commandRunner.runCommand(
+                                            "tmux new -s $target -n player -d; tmux send-keys -t $target '$target'; sleep 1; tmux send-keys -t $target 'Enter'",
+                                            ignoreOutput = true,
+                                        )
+                                        delay(1000.milliseconds)
+                                    }
+                                    printToChat(listOf("Player restarted successfully!"))
+                                } catch (e: Exception) {
+                                    printToChat(listOf("Failed to restart player: ${e.message}"))
+                                }
+                                commandJob.complete()
+                                return Pair(true, null)
+                            }
+
                             // lyrics command
                             commandString.contains(
                                 "^(${cmdList.commandList["lyrics"]})$".toRegex(),

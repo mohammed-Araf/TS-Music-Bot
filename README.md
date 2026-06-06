@@ -1,78 +1,105 @@
-# TeamSpeak 3 Spotify Music Bot
+<div align="center">
 
-An ultra-lightweight, streaming-only TeamSpeak 3 music bot optimized for Linux/macOS environments (such as VPS instances). It plays music directly from Spotify Premium using `ncspot` or the official Spotify client, routed through a PulseAudio virtual loopback device directly into the official TeamSpeak 3 desktop client.
+# 🎵 TS3 Music Bot
 
-> [!IMPORTANT]
-> This bot does **never download tracks**. It streams audio in real-time, resulting in minimal CPU usage (<15% when playing) and memory overhead, making it ideal for 1 GB RAM VPS environments.
+**A lightweight, streaming-only TeamSpeak 3 music bot — built for Linux VPS environments.**
 
----
+[![Language](https://img.shields.io/badge/language-Kotlin-7F52FF?style=flat-square&logo=kotlin)](https://kotlinlang.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux)](https://www.linux.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-## Key Features
-
-* **Legitimate Spotify Streaming**: Streams music directly from Spotify Premium (using the Spotify API for metadata and `ncspot` as the backend player).
-* **Smart Command Routing**:
-  * **`!p <query>`**: Automatically plays a search query or link immediately if the queue is stopped.
-  * **`!play <query>`**: Queues the track if a song is currently playing.
-  * **Dynamic Selection**: Both commands dynamically route based on active playback state so users get expected behavior (instant play vs. queue addition).
-* **Spotify Search Defaults**: Plain text search queries (e.g. `!p Alan Walker Faded`) automatically resolve to a Spotify search (`sp track ...`) without needing explicit prefixes.
-* **Custom Command Configuration**: Supports mapping any command to a custom trigger name and prefix via a configuration file.
-* **Multi-Service Support**: Streams Spotify natively, and supports SoundCloud, YouTube, and Bandcamp playbacks via `mpv` routing.
-* **Pre-Shuffling**: Allows shuffling albums and playlists before adding them to the queue to avoid shuffling the entire playback history.
+</div>
 
 ---
 
-## Architecture Flow
+## Overview
 
-```mermaid
-graph TD
-    User["TeamSpeak Channel Chat"] -->|!p Alan Walker Faded| BotJar["TS3 MusicBot (Java/Kotlin)"]
-    BotJar -->|Parse & Preprocess| BotJar
-    BotJar -->|Spotify Web API| Metadata["Fetch track link"]
-    BotJar -->|MPRIS / D-Bus| Ncspot["ncspot (Spotify Premium Player in tmux)"]
-    Ncspot -->|Plays Stream| PulseAudio["PulseAudio Loopback Device"]
-    PulseAudio -->|Capture Monitor| TS3Client["TS3 Desktop Client (running inside Xvfb)"]
-    TS3Client -->|Transmit Voice| TS3Server["TeamSpeak 3 Server Channel"]
+TS3 Music Bot connects to a TeamSpeak 3 server and plays music directly into a channel via a PulseAudio virtual loopback device. It streams from **Spotify Premium** (via `ncspot`) and supports **YouTube**, **SoundCloud**, and **Bandcamp** (via `mpv`). The bot runs the official TS3 desktop client headlessly inside an `Xvfb` virtual display.
+
+> **No downloads. No buffering.** Music is streamed in real-time, keeping CPU usage under 15% and RAM well within 1 GB VPS constraints.
+
+---
+
+## Architecture
+
+```
+TeamSpeak Channel Chat
+        │
+        │ !p <query>
+        ▼
+TS3 MusicBot (Kotlin / JVM)
+        │
+        ├──► Spotify Web API → fetch track metadata / link
+        │
+        ├──► ncspot (via MPRIS / D-Bus in tmux)
+        │         │
+        │         └──► PulseAudio Loopback Device
+        │                       │
+        └──────────────────────► TS3 Desktop Client (Xvfb :99)
+                                          │
+                                          └──► TeamSpeak 3 Server Channel
 ```
 
 ---
 
-## Dependencies & Prerequisites
+## Features
 
-To run this bot (GUI-controller mode), your server/host machine requires:
-
-* **Java Runtime**: JDK 17 or higher.
-* **OpenJFX**: JavaFX platform libraries (typically `/usr/share/openjfx/lib`).
-* **PulseAudio**: Virtual loopback device for capturing system output.
-* **Xvfb**: X Virtual Framebuffer (to run the GUI TeamSpeak 3 client headlessly on headless servers).
-* **tmux**: Terminal multiplexer to run `ncspot` in a background workspace.
-* **ncspot**: A ncurses-based Spotify client (requires a Spotify Premium subscription).
-* **TeamSpeak 3 Client**: Official desktop client (Linux amd64).
+| Feature | Description |
+|---|---|
+| **Smart Play / Queue** | `!p` plays immediately if idle; `!play` queues if something is already playing |
+| **Spotify Defaults** | Plain-text queries (e.g. `!p Alan Walker Faded`) resolve to Spotify automatically |
+| **Multi-Service** | Spotify (native), YouTube, SoundCloud, Bandcamp |
+| **Permission Control** | Restrict commands by TeamSpeak Server Group ID |
+| **Custom Commands** | Remap any command prefix via `commands.config` |
+| **Pre-Shuffle** | Shuffle albums/playlists before adding to queue |
+| **Restart Command** | `!restart` to recover from audio freezes without SSH |
 
 ---
 
-## Configuration Files
+## Requirements
 
-### 1. Bot Settings (`ts3-musicbot.config`)
-Configure connection settings, paths, and player options.
-Example options:
+Ensure the following are installed on your **Linux server**:
+
+- **Java 17+** (JDK)
+- **OpenJFX** — JavaFX libraries (e.g. `/usr/share/openjfx/lib`)
+- **PulseAudio** — virtual audio loopback
+- **Xvfb** — headless virtual display
+- **tmux** — terminal multiplexer for background sessions
+- **ncspot** — ncurses Spotify client *(requires Spotify Premium)*
+- **mpv** — media player for non-Spotify sources
+- **TeamSpeak 3 Client** — official Linux amd64 desktop client
+
+---
+
+## Configuration
+
+### `ts3-musicbot.config` — Bot Settings
+
 ```ini
 # Server connection
-serverAddress=127.0.0.1
+serverAddress=your.server.ip
 serverPort=9987
-channelPath=Lobby
-channelPassword=your_channel_password
+channelPath=Music
+channelPassword=
+
+# Bot identity
 botNickname=MusicBot
 
-# Spotify credentials & player selection
+# Spotify player backend
 spotifyPlayer=ncspot
-spotifyUsername=your_username
-spotifyPassword=your_password
+spotifyUsername=your_spotify_email
+spotifyPassword=your_spotify_password
 ```
 
-### 2. Custom Commands (`commands.config`)
-Modify this file to customize prefixes and command bindings. The default configured mapping is:
+---
+
+### `commands.config` — Command Mapping
+
+Remap any command to a custom name. The prefix character is set with `COMMAND_PREFIX`.
+
 ```ini
 COMMAND_PREFIX=!
+
 QUEUE_PLAYNOW=p
 QUEUE_ADD=play
 QUEUE_SKIP=s
@@ -87,70 +114,110 @@ VOLUME=v
 QUEUE_REPEAT=loop
 QUEUE_NOWPLAYING=np
 INFO=src
+RESTART=restart
 ```
 
-### 3. User Permissions Configuration (`permissions.yml`)
-Enable badge-based validation for controlling commands and specify which commands are publicly accessible:
+---
+
+### `permissions.yml` — Access Control
+
+Control who can use music commands using **TeamSpeak Server Group IDs**.
+
 ```yaml
 permissions:
-  # Enable or disable the entire permissions module
+  # Enable or disable the permissions module entirely
   enabled: true
 
-  # List of badges required to execute restricted/music control commands (set to [] to ignore global badges)
+  # Global TS badge GUIDs required to use restricted commands
+  # Set to [] to disable badge-based checks (use server groups instead)
   required_badges: []
 
-  # List of numeric server group IDs allowed to execute restricted/music control commands
+  # Server Group IDs allowed to use restricted commands
+  # Find your Group ID in: TS3 Server → Permissions → Server Groups
   required_server_groups:
-    - 50
-    - 100
+    - 50   # e.g. "DJ Private"
 
-  # Cache badges locally to prevent querying the TS3 server on every command
+  # Cache settings — reduce TTL for faster group change propagation
   cache_badges: true
   cache_ttl_seconds: 5
 
-  # Message sent to the channel when a user attempts a restricted command without permission
+  # Message shown when a user is denied
   deny_message: "You are not allowed to use music commands."
 
-  # Commands that can be executed by anyone, regardless of badges/groups
+  # Commands usable by everyone, regardless of permissions
   public_commands:
     - "np"
     - "q"
     - "src"
-    - "ping"
 ```
 
-> [!TIP]
-> **Badge GUIDs vs Server Group IDs**:
-> - `required_badges` accepts **String** values representing official TeamSpeak badge GUIDs (which are standard UUID strings like `"0cd924ed-c5ea-459e-b60a-4f1bc0b65f07"` or `"8d843dfa-c51a-407f-87b3-94cfc8f03e96"`). These are not user-defined names.
-> - **How to find Badge GUIDs**: When a user runs a command, the bot prints their active badges and server groups to the console/log output:
->   `[PERMISSIONS] Checked client PlayerName (ID: 15): Badges=[0cd924ed-c5ea-459e-b60a-4f1bc0b65f07], Groups=[10, 20]`
->   Administrators can view the bot logs (e.g., via `journalctl -u ts3-musicbot`) to copy the exact badge GUIDs for configuring `permissions.yml`.
-> - `required_server_groups` accepts **Integer** IDs of TeamSpeak server groups (e.g. `10`, `20`).
+> **Tip:** To find your server group ID, look at `TS3 → Permissions → Server Groups`. The ID is the number next to the group name. You can also see a user's groups in the bot console output when they run a command:
+> ```
+> [PERMISSIONS] Client DJ_User (ID: 15): Badges=[], Groups=[50, 8]
+> ```
 
 ---
 
-## Starting the Bot
+## Commands
 
-To start the environment, load the D-Bus session, spin up PulseAudio/Xvfb, and run the JAR with configs, execute the startup script `run-bot.sh`:
+All commands use the prefix defined in `commands.config` (default: `!`).
+
+| Command | Arguments | Description |
+|:---|:---|:---|
+| `!p` | `<query / link>` | **Smart Play** — plays immediately if idle, or queues if already playing |
+| `!play` | `<query / link>` | **Force Queue** — always adds to queue |
+| `!s` | — | Skip current track |
+| `!stop` | — | Stop playback and clear queue |
+| `!pause` | — | Pause playback |
+| `!r` | — | Resume playback |
+| `!q` | — | Show next 15 tracks in queue |
+| `!c` | — | Clear the entire queue |
+| `!rm` | `<index>` | Remove track at position (0-indexed) |
+| `!mv` | `<from> -p <to>` | Move track from one position to another |
+| `!v` | `<0–100>` | Set playback volume |
+| `!loop` | `<count>` | Repeat current track `<count>` times |
+| `!np` | — | Show currently playing song info |
+| `!src` | `<query / link>` | Show source/metadata for a query |
+| `!restart` | — | Restart the media player (fixes audio freezes) |
+
+### Query Prefixes
+
+| Prefix | Service |
+|:---|:---|
+| *(none)* | Spotify (default) |
+| `sp track` | Spotify track |
+| `sp album` | Spotify album |
+| `sp playlist` | Spotify playlist |
+| `yt` | YouTube |
+| `sc` | SoundCloud |
+| `bc` | Bandcamp |
+
+---
+
+## Running the Bot
+
+### Startup Script (`run-bot.sh`)
+
+Create this script on your server and make it executable (`chmod +x run-bot.sh`):
 
 ```bash
 #!/bin/bash
 set -e
 
-# Setup User D-Bus session environment (required for ncspot MPRIS controls)
+# D-Bus session (required for ncspot MPRIS controls)
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
 
-# Initialize PulseAudio
+# Start PulseAudio if not running
 pulseaudio --check || pulseaudio --start --exit-idle-time=-1
 sleep 2
 
-# Spawn virtual display frame on display :99 for TS3 GUI
+# Start virtual display
 Xvfb :99 -screen 0 1024x768x24 &
 sleep 2
 export DISPLAY=:99
 
-# Run the Bot with Config overrides
+# Launch the bot
 java --module-path /usr/share/openjfx/lib \
      --add-modules javafx.controls,javafx.fxml \
      -jar ts3-musicbot.jar \
@@ -158,39 +225,13 @@ java --module-path /usr/share/openjfx/lib \
      --command-config commands.config
 ```
 
----
+### Running as a systemd Service (Recommended)
 
-## Commands Reference
+1. Create `/etc/systemd/system/ts3-musicbot.service`:
 
-The following commands are available inside the channel chat where the bot is connected (using the `!` prefix as mapped in `commands.config`):
-
-| Command | Arguments | Description |
-| :--- | :--- | :--- |
-| **`!p`** | `<query / link>` | Smart Play: Plays track immediately if idle (translated to `queue-playnow`). Defaults plain text queries to Spotify. |
-| **`!play`** | `<query / link>` | Smart Queue: Appends track to the queue if playing (translated to `queue-add`). Defaults plain text queries to Spotify. |
-| **`!s`** | None | Skips the current track in the queue. |
-| **`!stop`** | None | Stops queue and clears active playback. |
-| **`!pause`** | None | Pauses playback. |
-| **`!r`** | None | Resumes playback. |
-| **`!q`** | None | Lists the next 15 tracks in the queue. |
-| **`!c`** | None | Clears all tracks from the queue. |
-| **`!rm`** | `<position>` | Deletes the track at the specified index (0-indexed). |
-| **`!mv`** | `<from> -p <to>` | Moves a track from index `<from>` to index `<to>`. |
-| **`!v`** | `<0-100>` | Sets playback volume. |
-| **`!loop`** | `<amount>` | Queues the currently playing track `<amount>` times. |
-| **`!np`** | None | Displays detailed information about the currently playing song. |
-| **`!src`** | `<query / link>` | Displays source/metadata information for a search query. |
-
----
-
-## Deploying as a systemd Service (VPS)
-
-You can run the bot persistently in the background on your VPS using systemd.
-
-1. Create a service file `/etc/systemd/system/ts3-musicbot.service`:
 ```ini
 [Unit]
-Description=TeamSpeak 3 Music Bot (Alan's Music bot Alpha)
+Description=TS3 Music Bot
 After=network.target
 
 [Service]
@@ -206,15 +247,34 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-2. Reload systemd daemon and start/enable the service:
+2. Enable and start:
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ts3-musicbot
 sudo systemctl start ts3-musicbot
 ```
 
-3. Monitor logs in real-time:
+3. View live logs:
+
 ```bash
 sudo journalctl -u ts3-musicbot -f -n 100
 ```
 
+---
+
+## Troubleshooting
+
+| Problem | Solution |
+|:---|:---|
+| Audio is frozen / silent | Use `!restart` in chat to reset the media player |
+| Commands not working for a user | Check their Server Group ID matches `required_server_groups` in `permissions.yml` |
+| `ncspot` not found | Ensure `ncspot` is installed and on `$PATH` for the bot's user |
+| TS3 client won't start | Confirm `Xvfb` is running and `DISPLAY=:99` is exported before launching |
+| Volume too low/loud | Use `!v <0-100>` to adjust, or set PulseAudio sink volume via `pactl` |
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

@@ -194,6 +194,40 @@ All commands use the prefix defined in `commands.config` (default: `!`).
 
 ---
 
+## Building from Source
+
+> **The JAR is not included in the repository.** You must build it yourself before running the bot.
+
+### Prerequisites
+
+- **Java 11+ JDK** installed (JDK 17 recommended)
+- **Git** to clone the repo
+
+### Steps
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/mohammed-Araf/TS-Music-Bot.git
+cd TS-Music-Bot
+
+# 2. Build the fat JAR (includes all dependencies)
+./gradlew shadowJar
+```
+
+The compiled JAR will be output to:
+```
+app/build/libs/ts3-musicbot.jar
+```
+
+Copy it to wherever you run the bot from:
+```bash
+cp app/build/libs/ts3-musicbot.jar ~/ts3-musicbot.jar
+```
+
+> **Windows users:** Use `gradlew.bat shadowJar` instead of `./gradlew shadowJar`.
+
+---
+
 ## Running the Bot
 
 ### Startup Script (`run-bot.sh`)

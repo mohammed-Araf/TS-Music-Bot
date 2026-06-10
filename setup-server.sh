@@ -5,11 +5,11 @@ echo "=== Updating packages ==="
 sudo apt-get update
 
 echo "=== Installing dependencies ==="
-sudo apt-get install -y xvfb tmux pulseaudio pulseaudio-utils openjdk-17-jre-headless openjfx dbus-x11 mpv netcat-openbsd git wget curl unzip libglib2.0-0 libx11-6 libxrender1 libdbus-1-3 libnss3 libegl1 libfontconfig1 libxi6 libxrandr2 libxtst6 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 dbus-user-session
+sudo apt-get install -y xvfb tmux pulseaudio pulseaudio-utils openjdk-17-jre-headless openjfx dbus-x11 mpv netcat-openbsd git wget curl unzip libglib2.0-0 libx11-6 libxrender1 libdbus-1-3 libnss3 libegl1 libfontconfig1 libxi6 libxrandr2 libxtst6 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 dbus-user-session libssl-dev libasound2-dev libdbus-1-dev
 
 echo "=== Installing yt-dlp ==="
 sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp
-sudo chmod a+rx /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/dlp/yt-dlp || sudo chmod a+rx /usr/local/bin/yt-dlp
 sudo ln -sf /usr/local/bin/yt-dlp /usr/local/bin/youtube-dl
 
 echo "=== Installing TeamSpeak 3 Client 3.6.2 ==="
@@ -35,6 +35,18 @@ if [ ! -f "/usr/local/bin/ncspot" ]; then
   rm "ncspot-${LATEST_TAG}-linux-x86_64.tar.gz"
 else
   echo "ncspot already installed."
+fi
+
+echo "=== Installing spotify_player ==="
+if [ ! -f "/usr/local/bin/spotify_player" ]; then
+  LATEST_SP_TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" https://github.com/aome510/spotify-player/releases/latest | grep -oE "[^/]+$")
+  wget "https://github.com/aome510/spotify-player/releases/download/${LATEST_SP_TAG}/spotify_player-x86_64-unknown-linux-gnu.tar.gz"
+  tar -xzf "spotify_player-x86_64-unknown-linux-gnu.tar.gz"
+  sudo mv spotify_player /usr/local/bin/spotify_player
+  sudo chmod +x /usr/local/bin/spotify_player
+  rm "spotify_player-x86_64-unknown-linux-gnu.tar.gz"
+else
+  echo "spotify_player already installed."
 fi
 
 echo "=== Setup complete ==="

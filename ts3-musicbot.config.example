@@ -1,0 +1,13 @@
+# TS3 Music Bot Configuration Template
+# Rename this file to ts3-musicbot.config and update the values.
+
+SERVER_ADDRESS=127.0.0.1
+SERVER_PORT=9987
+SERVER_PASSWORD=
+CHANNEL_NAME=Music
+CHANNEL_PASSWORD=
+NICKNAME=MusicBot
+SPOTIFY_PLAYER=spotify_player
+SPOTIFY_USERNAME=your_spotify_username
+SPOTIFY_PASSWORD=your_spotify_password
+ACCEPT_TS_LICENSE=true

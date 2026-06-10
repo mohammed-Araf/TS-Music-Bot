@@ -25,6 +25,14 @@ if [ ! -f "${JAR_NAME}" ]; then
     echo "=== Build complete: ${JAR_NAME} ==="
 fi
 
+# ─── Check Configuration ───────────────────────────────────────────────────
+if [ ! -f "ts3-musicbot.config" ]; then
+    echo "=== ts3-musicbot.config not found! Creating from template... ==="
+    cp ts3-musicbot.config.example ts3-musicbot.config
+    echo "ERROR: Please configure your TeamSpeak and Spotify settings in 'ts3-musicbot.config' before running again."
+    exit 1
+fi
+
 # ─── Environment ─────────────────────────────────────────────────────────────
 echo "=== Setting up environment ==="
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"

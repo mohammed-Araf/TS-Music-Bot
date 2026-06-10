@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import ts3musicbot.client.OfficialTSClient
+import ts3musicbot.client.Client
 import ts3musicbot.services.Bandcamp
 import ts3musicbot.services.ServiceType
 import ts3musicbot.services.SoundCloud
@@ -1040,6 +1041,10 @@ class SongQueue(
                     }
                 }
 
+                if (trackJob.isActive) {
+                    (teamSpeak as? Client)?.setMicMuted(false)
+                }
+
                 loop@ while (trackJob.isActive) {
                     val status = playerStatus()
                     val url = currentUrl()
@@ -1208,6 +1213,7 @@ class SongQueue(
             if (track.isNotEmpty()) {
                 shouldPause = true
                 playerctl(getPlayer(), "pause")
+                (teamSpeak as? Client)?.setMicMuted(true)
             }
         }
 
@@ -1217,6 +1223,7 @@ class SongQueue(
                 refreshPulseAudio()
                 checkTeamSpeakAudio(trackJob)
                 playerctl(getPlayer(), "play")
+                (teamSpeak as? Client)?.setMicMuted(false)
             }
         }
 
@@ -1231,6 +1238,7 @@ class SongQueue(
             if (player == "mpv") {
                 killPlayer(player)
             }
+            (teamSpeak as? Client)?.setMicMuted(true)
             listener.onTrackStopped(player, track)
         }
 
@@ -1246,6 +1254,7 @@ class SongQueue(
             if (player == "mpv") {
                 killPlayer(player)
             }
+            (teamSpeak as? Client)?.setMicMuted(true)
             listener.onTrackEnded(player, track)
         }
     }

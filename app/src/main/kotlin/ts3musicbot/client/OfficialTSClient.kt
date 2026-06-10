@@ -884,10 +884,16 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
                 printOutput = false,
             )
             println("Audio setup done.")
+            setMicMuted(true)
         } else {
             println("TeamSpeak's audio is broken, restarting client.")
             restartClient()
         }
+    }
+
+    override fun setMicMuted(muted: Boolean) {
+        val muteVal = if (muted) "1" else "0"
+        clientQuery("clientupdate client_input_muted=$muteVal")
     }
 
     fun getClientBadges(clientId: Int): List<String> {

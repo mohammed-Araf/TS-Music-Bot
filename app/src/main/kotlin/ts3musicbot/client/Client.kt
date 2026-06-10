@@ -60,4 +60,6 @@ open class Client(open val botSettings: BotSettings) {
     open fun getClientList(): List<String> = emptyList()
 
     open fun getChannelList(): List<String> = emptyList()
+
+    open fun setMicMuted(muted: Boolean) {}
 }

@@ -705,9 +705,13 @@ class SongQueue(
 
                         "ncspot" -> {
                             val homePath = System.getProperty("user.home")
+                            // ncspot < 1.0 used librespot credentials.json
                             val credentialsFile = File("$homePath/.cache/ncspot/librespot/credentials.json")
+                            // ncspot >= 1.0 uses OAuth2 — token stored in userstate.cbor
+                            val oauthTokenFile = File("$homePath/.config/ncspot/userstate.cbor")
                             val configPath = "$homePath/.config/ncspot"
-                            if (!credentialsFile.exists()) {
+                            val isLoggedIn = credentialsFile.exists() || (oauthTokenFile.exists() && oauthTokenFile.length() > 0)
+                            if (!isLoggedIn) {
                                 println("Not logged in to ncspot! Creating config file...")
                                 // If the credentials file doesn't exist, the user hasn't logged into ncspot.
                                 // In this case, write a new config file in ~/.config/ncspot/config.toml

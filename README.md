@@ -20,6 +20,38 @@ TS3 Music Bot connects to a TeamSpeak 3 server and plays music directly into a c
 
 ---
 
+## 🚀 Quick Start (Setup in 3 Steps)
+
+Setting up the music bot is now fully automated! Follow these 3 simple steps:
+
+### 1. Clone the Repository
+Connect to your Linux server via SSH and run:
+```bash
+git clone https://github.com/mohammed-Araf/TS-Music-Bot.git
+cd TS-Music-Bot
+```
+
+### 2. Install Dependencies
+Install all required packages (Java, PulseAudio, TeamSpeak, ncspot, and spotify_player) automatically:
+```bash
+chmod +x setup-server.sh
+./setup-server.sh
+```
+
+### 3. Configure and Run
+Run the bot launcher:
+```bash
+chmod +x run-bot.sh
+./run-bot.sh
+```
+* **First run:** The script will automatically create `ts3-musicbot.config`.
+* **Configure:** Open `ts3-musicbot.config` using a text editor (e.g., `nano ts3-musicbot.config`) and enter your TeamSpeak server address, nickname, and Spotify credentials.
+* **Launch:** Run `./run-bot.sh` again to compile the JAR and start the bot!
+
+*Note: The first time you use Spotify playback, follow the authorization link printed in the console to authorize Spotify in your browser, and paste the redirect link back into the terminal. The login token will be saved permanently.*
+
+---
+
 ## Architecture
 
 ```

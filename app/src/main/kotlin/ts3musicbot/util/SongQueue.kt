@@ -835,15 +835,14 @@ class SongQueue(
                             if (playerStatus().outputText == "Playing" && currentPos > trackPosition) {
                                 trackPosition = currentPos
                             }
+                            val currentLength = getTrackLength()
+                            if (currentLength > 0L) {
+                                trackLength = currentLength
+                            }
                             print("\rTrack Position: $trackPosition/$trackLength seconds")
-                            if (trackPosition > trackLength + 30) {
+                            if (trackLength > 0L && trackPosition > trackLength + 30) {
                                 println("Wait.. what?")
-                                if (trackLength == 0L) {
-                                    println("Huh, why is trackLength 0?!\nTrying to get it again...")
-                                    trackLength = getTrackLength()
-                                } else {
-                                    skipTrack()
-                                }
+                                skipTrack()
                             }
                             delay(500.milliseconds)
                         }

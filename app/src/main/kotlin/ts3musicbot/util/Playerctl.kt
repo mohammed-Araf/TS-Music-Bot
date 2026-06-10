@@ -176,7 +176,16 @@ fun playerctl(
         }
 
         "open" -> {
-            dbusSend("OpenUri", "string:'$extra'")
+            if (mediaPlayer.startsWith("spotify_player")) {
+                val trackId = extra.substringAfter("spotify:track:").substringAfter("spotify:episode:")
+                commandRunner.runCommand(
+                    "/usr/local/bin/spotify_player playback start track -i $trackId",
+                    printOutput = false,
+                    printErrors = false
+                )
+            } else {
+                dbusSend("OpenUri", "string:'$extra'")
+            }
         }
 
         "next" -> {

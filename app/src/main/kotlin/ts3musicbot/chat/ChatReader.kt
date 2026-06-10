@@ -2779,6 +2779,8 @@ class ChatReader(
                                         playerctl(botSettings.spotifyPlayer, "volume", targetVolume.toString())
                                         playerctl("mpv", "volume", targetVolume.toString())
                                         
+                                        ts3musicbot.Main.saveSettingsAuto(botSettings)
+                                        
                                         printToChat(listOf("Volume set to $targetVolume% for Spotify and YouTube/SoundCloud."))
                                     }
                                 }

@@ -522,6 +522,36 @@ class Main :
             }
         }
 
+        fun saveSettingsAuto(
+            botSettings: BotSettings = BotSettings()
+        ) {
+            val file = File("${System.getProperty("user.dir")}/ts3-musicbot.config")
+            val fileWriter = PrintWriter(file)
+            fileWriter.println("API_KEY=${botSettings.apiKey}")
+            fileWriter.println("SERVER_ADDRESS=${botSettings.serverAddress}")
+            fileWriter.println("SERVER_PORT=${botSettings.serverPort}")
+            fileWriter.println("SERVER_PASSWORD=${botSettings.serverPassword}")
+            fileWriter.println("CHANNEL_NAME=${botSettings.channelName}")
+            fileWriter.println("CHANNEL_PASSWORD=${botSettings.channelPassword}")
+            fileWriter.println("CHANNEL_FILE_PATH=${botSettings.channelFilePath}")
+            fileWriter.println("NICKNAME=${botSettings.nickname}")
+            fileWriter.println("MARKET=${botSettings.market}")
+            fileWriter.println("SPOTIFY_PLAYER=${botSettings.spotifyPlayer}")
+            fileWriter.println("SPOTIFY_USERNAME=${botSettings.spotifyUsername}")
+            fileWriter.println("SPOTIFY_PASSWORD=${botSettings.spotifyPassword}")
+            fileWriter.println("USE_OFFICIAL_TSCLIENT=${botSettings.useOfficialTsClient}")
+            fileWriter.println("ACCEPT_TS_LICENSE=${botSettings.acceptTsLicense}")
+            fileWriter.println("SC_VOLUME=${botSettings.scVolume}")
+            fileWriter.println("YT_VOLUME=${botSettings.ytVolume}")
+            fileWriter.println("BC_VOLUME=${botSettings.bcVolume}")
+            fileWriter.println("YT_API_KEY=${botSettings.ytApiKey}")
+            fileWriter.println("SP_API_KEY=${botSettings.spApiKey}")
+            fileWriter.println("SP_CLIENT_ID=${botSettings.spClientId}")
+            fileWriter.println("SP_CLIENT_SECRET=${botSettings.spClientSecret}")
+            fileWriter.println()
+            fileWriter.close()
+        }
+
         private fun loadSettings(settingsFile: File): BotSettings {
             val settings = BotSettings()
 

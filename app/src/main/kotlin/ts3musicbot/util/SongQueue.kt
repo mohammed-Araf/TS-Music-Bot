@@ -471,9 +471,14 @@ class SongQueue(
             val metadata = playerctl(getPlayer(), "metadata")
             return if (metadata.errorText.isEmpty()) {
                 metadata.ifOutputTextNotEmpty { text ->
-                    text.lines()
-                        .first { it.contains("xesam:url") }
-                        .replace("(^.+\\s+\"?|\"?$)".toRegex(), "")
+                    try {
+                        text.lines()
+                            .firstOrNull { it.contains("xesam:url") }
+                            ?.replace("(^.+\\s+\"?|\"?$)".toRegex(), "")
+                            ?: ""
+                    } catch (_: Exception) {
+                        ""
+                    }
                 }
             } else {
                 ""
@@ -537,12 +542,19 @@ class SongQueue(
                         commandRunner.runCommand("tmux kill-session -t ncspot", ignoreOutput = true)
                     }
                     "spotify_player" -> {
-                        playerctl(player, "stop")
-                        commandRunner.runCommand("pkill -9 spotify_player")
-                        commandRunner.runCommand("tmux kill-session -t spotify_player", ignoreOutput = true)
+                        // Pause instead of kill — keeps the OAuth session alive so credentials
+                        // don't need to be re-entered on the next play command.
+                        playerctl(player, "pause")
+                        break
                     }
-                    "spotifyd" -> commandRunner.runCommand("echo \"$player isn't well supported yet, please kill it manually.\"")
-                    else -> commandRunner.runCommand("echo \"$player is not a supported player, please kill it manually!\" > /dev/stderr; return 2")
+                    "spotifyd" -> {
+                        commandRunner.runCommand("echo \"$player isn't well supported yet, please kill it manually.\"")
+                        break
+                    }
+                    else -> {
+                        commandRunner.runCommand("echo \"$player is not a supported player, please kill it manually!\" > /dev/stderr")
+                        break
+                    }
                 }
             }
         }
@@ -571,7 +583,7 @@ class SongQueue(
             }
 
             suspend fun startSpotifyPlayer(shouldSetPrefs: Boolean = true) {
-                fun startCommand() =
+                suspend fun startCommand() =
                     when (val player = botSettings.spotifyPlayer) {
                         "spotify" ->
                             commandRunner.runCommand(
@@ -586,12 +598,38 @@ class SongQueue(
                                 inheritIO = true,
                             )
 
-                        "ncspot", "spotify_player" ->
+                        "ncspot" ->
                             commandRunner.runCommand(
                                 "tmux new -s $player -n player -d; tmux send-keys -t $player \"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\\\$(id -u)/bus; $player\" Enter",
                                 ignoreOutput = true,
                                 printCommand = true,
                             )
+
+                        "spotify_player" -> {
+                            // Only launch a new instance if not already MPRIS-visible.
+                            // Reusing a running instance avoids repeated OAuth prompts.
+                            val alreadyRunning = commandRunner.runCommand(
+                                "playerctl -l 2>/dev/null | grep -q spotify_player && echo yes || echo no",
+                                printOutput = false,
+                            ).outputText.trim() == "yes"
+                            if (!alreadyRunning) {
+                                commandRunner.runCommand(
+                                    "tmux new -s $player -n player -d 2>/dev/null || true; " +
+                                        "tmux send-keys -t $player " +
+                                        "\"export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/\\\$(id -u)/bus; $player\" Enter",
+                                    ignoreOutput = true,
+                                    printCommand = true,
+                                )
+                                delay(3.seconds)
+                            } else {
+                                println("spotify_player already running and MPRIS-visible, reusing session.")
+                            }
+                            // Ensure the device is connected
+                            commandRunner.runCommand(
+                                "/usr/local/bin/spotify_player connect -n \"${botSettings.nickname}\"",
+                                printOutput = false
+                            )
+                        }
 
                         "spotifyd" -> commandRunner.runCommand("echo \"spotifyd isn't well supported yet, please start it manually.\"")
                         else ->
@@ -859,6 +897,12 @@ class SongQueue(
                         while (!playerStatus().outputText.contains("Playing")) {
                             if (playingAttempts < 5) {
                                 if (attempts < 10) {
+                                    if (player == "spotify_player") {
+                                        commandRunner.runCommand(
+                                            "/usr/local/bin/spotify_player connect -n \"${botSettings.nickname}\"",
+                                            printOutput = false
+                                        )
+                                    }
                                     playerctl(
                                         getPlayer(),
                                         "open",
@@ -871,9 +915,14 @@ class SongQueue(
                                             track.link.getId(),
                                     )
                                     attempts++
-                                    delay(500.milliseconds)
+                                    delay(1.seconds)
+                                    val status = playerStatus().outputText.trim()
+                                    if (status != "Playing") {
+                                        playerctl(getPlayer(), "play")
+                                        delay(1.seconds)
+                                    }
                                     if (playerStatus().outputText != "Playing") {
-                                        delay(3500.milliseconds)
+                                        delay(2500.milliseconds)
                                     }
                                 } else {
                                     println("The player may be stuck, trying to start it again.")
@@ -1051,7 +1100,7 @@ class SongQueue(
                             }
 
                             "Paused" -> {
-                                if (getPlayer() == "spotify") {
+                                if (getPlayer() == "spotify" || getPlayer() == "spotify_player" || getPlayer() == "ncspot") {
                                     if (trackPosition >= trackLength - 5) {
                                         // Song ended
                                         // Spotify changes playback status to "Paused" right before the song actually ends,
@@ -1178,10 +1227,7 @@ class SongQueue(
                 trackJob.cancel()
             }
             val player = getPlayer()
-            // try stopping playback in a loop because sometimes just once doesn't seem to be enough
-            while (playerStatus().outputText == "Playing") {
-                playerctl(player, if (player == "spotify") "pause" else "stop")
-            }
+            playerctl(player, if (player == "spotify") "pause" else "stop")
             // if mpv is in use, kill the process
             if (player == "mpv") {
                 killPlayer(player)

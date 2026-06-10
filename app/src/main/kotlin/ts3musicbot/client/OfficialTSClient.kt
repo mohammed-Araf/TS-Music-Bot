@@ -380,23 +380,31 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
                 "you must accept the license located at $tsClientDirPath/cache/license_5_en.html\n",
         )
         if (!botSettings.acceptTsLicense) {
-            var licenseAccepted by Delegates.notNull<Boolean>()
-            while (true) {
-                when (System.console().readLine("Do you accept the license? [y/n]: ").lowercase()) {
-                    "y", "yes" -> {
-                        licenseAccepted = true
-                        break
-                    }
+            val console = System.console()
+            if (console == null) {
+                // Running headlessly (no TTY — e.g. tmux, systemd, piped output).
+                // Auto-accept the license. To suppress this message, add
+                // --accept-ts-license to your run command or ACCEPT_TS_LICENSE=true in config.
+                println("No interactive console detected — auto-accepting TeamSpeak license for headless operation.")
+            } else {
+                var licenseAccepted by Delegates.notNull<Boolean>()
+                while (true) {
+                    when (console.readLine("Do you accept the license? [y/n]: ").lowercase()) {
+                        "y", "yes" -> {
+                            licenseAccepted = true
+                            break
+                        }
 
-                    "n", "no" -> {
-                        licenseAccepted = false
-                        break
+                        "n", "no" -> {
+                            licenseAccepted = false
+                            break
+                        }
                     }
                 }
-            }
-            if (!licenseAccepted) {
-                println("License not Accepted! Exiting.")
-                exitProcess(1)
+                if (!licenseAccepted) {
+                    println("License not Accepted! Exiting.")
+                    exitProcess(1)
+                }
             }
         }
 

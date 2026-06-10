@@ -1226,7 +1226,7 @@ class SongQueue(
                 trackJob.cancel()
             }
             val player = getPlayer()
-            playerctl(player, if (player == "spotify") "pause" else "stop")
+            playerctl(player, if (player == "spotify" || player == "spotify_player" || player == "ncspot") "pause" else "stop")
             // if mpv is in use, kill the process
             if (player == "mpv") {
                 killPlayer(player)
@@ -1241,7 +1241,7 @@ class SongQueue(
             }
             val player = getPlayer()
             while (playerStatus().outputText == "Playing") {
-                playerctl(player, if (player == "spotify") "pause" else "stop")
+                playerctl(player, if (player == "spotify" || player == "spotify_player" || player == "ncspot") "pause" else "stop")
             }
             if (player == "mpv") {
                 killPlayer(player)

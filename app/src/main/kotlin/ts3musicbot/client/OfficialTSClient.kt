@@ -885,6 +885,7 @@ class OfficialTSClient(botSettings: BotSettings) : Client(botSettings) {
             )
             println("Audio setup done.")
             setMicMuted(true)
+            clientQuery("clientupdate client_output_muted=1")
         } else {
             println("TeamSpeak's audio is broken, restarting client.")
             restartClient()

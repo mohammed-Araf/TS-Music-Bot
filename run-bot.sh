@@ -47,13 +47,13 @@ sleep 2
 echo "=== Starting Xvfb on :99 ==="
 pkill Xvfb || true
 sleep 1
-Xvfb :99 -screen 0 1024x768x24 &
+Xvfb :99 -screen 0 800x600x16 &
 sleep 2
 export DISPLAY=:99
 
 # ─── Launch Bot ──────────────────────────────────────────────────────────────
 echo "=== Running TS3 MusicBot ==="
-java --module-path /usr/share/openjfx/lib \
+nice -n 10 java --module-path /usr/share/openjfx/lib \
      --add-modules javafx.controls,javafx.fxml \
      -jar "${JAR_NAME}" \
      --config ts3-musicbot.config \

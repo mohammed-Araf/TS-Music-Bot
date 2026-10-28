@@ -694,6 +694,35 @@ async def audio(ctx, arg):
     return "Audio backend restarted." if r.returncode == 0 else f"Failed: {r.stdout.strip()}"
 
 def _get_sys_resources():
+    # 1. Read container memory from cgroups (v2 or v1)
+    container_used = None
+    container_limit = None
+    container_pct = None
+
+    # cgroup v2
+    if os.path.exists("/sys/fs/cgroup/memory.current"):
+        try:
+            with open("/sys/fs/cgroup/memory.current") as f:
+                container_used = int(f.read().strip()) // (1024 * 1024)
+            with open("/sys/fs/cgroup/memory.max") as f:
+                raw_max = f.read().strip()
+                if raw_max != "max":
+                    container_limit = int(raw_max) // (1024 * 1024)
+        except Exception:
+            pass
+    # cgroup v1 fallback
+    elif os.path.exists("/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        try:
+            with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
+                container_used = int(f.read().strip()) // (1024 * 1024)
+            with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+                raw_max = int(f.read().strip()) // (1024 * 1024)
+                if raw_max < 1000000:
+                    container_limit = raw_max
+        except Exception:
+            pass
+
+    # 2. Host / system memory from /proc/meminfo
     mem = {}
     try:
         with open("/proc/meminfo") as f:
@@ -712,6 +741,11 @@ def _get_sys_resources():
     except Exception:
         tot, used, pct = 0, 0, 0
         sw_tot, sw_used, sw_pct = 0, 0, 0
+
+    if container_used is not None:
+        if not container_limit:
+            container_limit = tot
+        container_pct = round((container_used / container_limit) * 100, 1) if container_limit else 0
 
     cpu = "N/A"
     try:
@@ -732,6 +766,7 @@ def _get_sys_resources():
         pass
 
     return {
+        "container_used": container_used, "container_limit": container_limit, "container_pct": container_pct,
         "ram_used": used, "ram_total": tot, "ram_pct": pct,
         "swap_used": sw_used, "swap_total": sw_tot, "swap_pct": sw_pct,
         "cpu": cpu, "uptime": uptime
@@ -792,11 +827,16 @@ async def status(ctx, arg):
         sp_info = (f"• Account: [b]{user}[/b] | Device: [b]{dev}[/b]\n"
                    f"• State: {state_str} | Volume: [b]{vol}%[/b]{track_info}")
 
+    ram_lines = ""
+    if sys_res.get("container_used") is not None:
+        ram_lines += f"• Bot Container RAM: [b]{sys_res['container_used']} MB[/b] / {sys_res['container_limit']} MB ({sys_res['container_pct']}%)\n"
+    ram_lines += f"• Host System RAM: [b]{sys_res['ram_used']} MB[/b] / {sys_res['ram_total']} MB ({sys_res['ram_pct']}%)"
+
     return (
         f"📊 [b]Bot & System Health Status[/b]\n"
         f"──────────────────────────────────────\n"
         f"🖥️ [b]System Resources:[/b]\n"
-        f"• RAM: [b]{sys_res['ram_used']} MB[/b] / {sys_res['ram_total']} MB ({sys_res['ram_pct']}%)\n"
+        f"{ram_lines}\n"
         f"• Swap: [b]{sys_res['swap_used']} MB[/b] / {sys_res['swap_total']} MB ({sys_res['swap_pct']}%)\n"
         f"• CPU Load: [b]{sys_res['cpu']}[/b] | Uptime: [b]{sys_res['uptime']}[/b]\n\n"
         f"🎙️ [b]TeamSpeak 3:[/b]\n"

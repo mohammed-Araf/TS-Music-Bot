@@ -501,6 +501,7 @@ class App:
                         new_msg = f"⚠️ Disconnected | Type {CFG.prefix}login"
                         away_flag = 1
                     elif st and not st.get("paused") and not st.get("stopped") and st.get("track"):
+                        vol = st.get("volume", CFG.initial_volume)
                         track = st.get("track", {})
                         title = track.get("name", "Unknown Track")
                         artists_raw = track.get("artist_names", [])
@@ -517,19 +518,20 @@ class App:
                             bar = "░" * 8
                             time_str = "0:00"
 
-                        base_len = len(f"▶  [{bar}] {time_str} [{duck_tag}]")
-                        rem = 80 - base_len - 1
+                        base_len = len(f"▶  [{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]")
+                        rem = 85 - base_len - 1
                         track_name = f"{title} - {artists}" if artists else title
                         if len(track_name) > rem:
                             track_name = track_name[:rem - 1] + "…"
-                        new_msg = f"▶ {track_name} [{bar}] {time_str} [{duck_tag}]"
+                        new_msg = f"▶ {track_name} [{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]"
                         away_flag = 0
                     elif st and st.get("paused"):
                         vol = st.get("volume", CFG.initial_volume)
-                        new_msg = f"⏸️ Paused ({vol}%) [{duck_tag}]"
+                        new_msg = f"⏸️ Paused [Vol:{vol}%] [{duck_tag}]"
                         away_flag = 0
                     else:
-                        new_msg = ""
+                        vol = st.get("volume", CFG.initial_volume) if st else CFG.initial_volume
+                        new_msg = f"🎵 Ready [Vol:{vol}%] [{duck_tag}]"
                         away_flag = 0
 
                     if new_msg != last_away_msg:

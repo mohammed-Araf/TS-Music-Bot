@@ -505,7 +505,7 @@ class App:
                     # Detect if currently playing chill background beats vs user track
                     if st and st.get("context_uri") == CFG.chill_autoplay_uri:
                         self.is_ambient_autoplay = True
-                    elif st and st.get("context_uri") and st.get("context_uri") != CFG.chill_autoplay_uri:
+                    elif st and (not st.get("context_uri") or st.get("context_uri") != CFG.chill_autoplay_uri):
                         self.is_ambient_autoplay = False
 
                     # Enforce 20% volume ceiling while in BGM mode
@@ -569,12 +569,16 @@ class App:
                             bar = "░" * 8
                             time_str = "0:00"
 
-                        base_len = len(f"▶  [{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]")
-                        rem = 85 - base_len - 1
+                        suffix = f"[{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]"
+                        # TeamSpeak 3 has a strict 80-character limit for client_away_message.
+                        # Cap total string length at 75 to guarantee safety under all conditions.
+                        max_track_len = max(10, 75 - len("▶ ") - len(suffix) - 1)
                         track_name = f"{title} - {artists}" if artists else title
-                        if len(track_name) > rem:
-                            track_name = track_name[:rem - 1] + "…"
-                        new_msg = f"▶ {track_name} [{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]"
+                        if len(track_name) > max_track_len:
+                            track_name = track_name[:max_track_len - 1] + "…"
+                        new_msg = f"▶ {track_name} {suffix}"
+                        if len(new_msg) > 75:
+                            new_msg = new_msg[:75]
                         away_flag = 0
                     elif st and st.get("paused"):
                         vol = st.get("volume", CFG.initial_volume)
@@ -595,7 +599,7 @@ class App:
                             await self.cq.cmd(cmd)
                             last_away_msg = new_msg
                         except Exception as e:
-                            log.debug("Failed to update away message: %s", e)
+                            log.warning("Failed to update away message (%s): %s", new_msg, e)
             except Exception as e:
                 log.debug("UI ticker error: %s", e)
             await asyncio.sleep(CFG.ticker_interval)

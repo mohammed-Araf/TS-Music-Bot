@@ -52,74 +52,48 @@ TeamSpeak Channel Chat (!p ...)
 
 ---
 
-## 🛠️ Quick Start
+## 🛠️ Quick Start (3 Easy Steps)
 
-### 1. Configure Shared Settings
+### 1. Configure Settings
 
-Check `.env.common` and ensure your TeamSpeak server and Spotify Developer App credentials are set:
+Copy the template configuration files:
+```bash
+cp .env.common.example .env.common
+cp bots/bot1.example.env bots/bot1.env
+```
 
+Open `.env.common` and enter your TeamSpeak Server details:
 ```env
 TS_HOST=your.teamspeak.server
 TS_PORT=9987
 TS_CHANNEL=Music
-TS_CHANNEL_PASSWORD=
-
-CMD_PREFIX=!
-CMD_COOLDOWN=1.5
-MAX_VOLUME=80
-INITIAL_VOLUME=40
-
-SPOTIFY_CLIENT_ID=your_spotify_client_id
-SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 ```
 
-### 2. Configure Bot 1
+*(Optional: Set your bot nickname in `bots/bot1.env` if you'd like a custom name)*.
 
-Open `bots/bot1.env`:
+### 2. Start the Bot
 
-```env
-TS_NICK=MusicBot1
-SPOTIFY_DEVICE_NAME=MusicBot1
-TS_CLIENTQUERY_APIKEY=          # filled after Step 4
-ADMIN_UIDS=your_teamspeak_uid=  # comma-separated TS unique IDs
-```
-
-### 3. Build the Image
-
-```bash
-docker compose build
-```
-
-### 4. First-Time Setup (Spotify Login & TS3 API Key)
-
-Run the bot in interactive setup mode:
-
-```bash
-mkdir -p data/bot1
-docker compose run --rm --name tsbot1-setup \
-  -e SETUP_MODE=1 -e VNC_PASSWORD=myvncpass \
-  -p 127.0.0.1:8888:8889 -p 127.0.0.1:5900:5900 \
-  bot1
-```
-
-*(If on a remote VPS, create an SSH tunnel: `ssh -L 8888:127.0.0.1:8888 -L 5900:127.0.0.1:5900 user@your-vps`)*
-
-1. **Link Spotify:** In the terminal logs, `go-librespot` will print a Spotify authorization URL. Open it in your browser, log in with this bot's Spotify Premium account, and approve. The browser redirects to `http://127.0.0.1:8888/...`, saving permanent credentials into `data/bot1/librespot/`.
-2. **Configure TeamSpeak 3 via VNC:** Connect a VNC viewer (e.g., TigerVNC, RealVNC, Screen Sharing) to `127.0.0.1:5900` with the password `myvncpass`.
-   - Go to **Tools → Options → Plugins** (or **Settings → Plugins**).
-   - Ensure **ClientQuery** is enabled, click its settings, and **copy the API Key**.
-   - Paste the API key into `bots/bot1.env` under `TS_CLIENTQUERY_APIKEY`.
-   - Ensure **Capture** is set to `Default` (Continuous Transmission) and **Playback** is set to `Default`.
-   - Note the bot's Identity Unique ID to grant server permissions.
-3. Stop the setup container (`Ctrl+C`).
-
-### 5. Start the Bot
-
-Start the bot in the background:
-
+Start the bot with Docker Compose:
 ```bash
 docker compose up -d bot1
-docker compose logs -f bot1
+```
+
+### 3. Connect Spotify from TeamSpeak Chat
+
+1. Join the TeamSpeak channel where the bot has connected.
+2. Type in the channel chat:
+   ```text
+   !login
+   ```
+3. The bot gives you a Spotify pairing link (`https://spotify.com/pair?code=XXXXXX`). Open it on your phone or browser, log in to Spotify Premium, and click **Confirm**.
+4. The bot will automatically announce:
+   ```text
+   ✅ Spotify Connected! Logged in as <username>. Ready to play music!
+   ```
+
+**That's it!** You can now play music immediately:
+```text
+!play Bohemian Rhapsody
 ```
 
 ---

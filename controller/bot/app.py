@@ -140,12 +140,33 @@ class App:
             delay = min(delay * 2, 30)
 
     async def spotify_loop(self):
+        was_ok = False
         while True:
             try:
                 st = await self.lr.status()
-                self.spotify_ok = bool(st and st.get("username"))
+                now_ok = bool(st and st.get("username"))
+                if was_ok and not now_ok and self.my_cid:
+                    try:
+                        await self.cq.say(
+                            self.my_cid,
+                            f"⚠️ [b]Spotify Session Ended:[/b] The linked account disconnected or Premium subscription ended.\n"
+                            f"👉 Type [b]{CFG.prefix}login[/b] in chat to reconnect or pair an active Premium account!"
+                        )
+                    except Exception:
+                        pass
+                self.spotify_ok = now_ok
+                was_ok = now_ok
             except Exception:
+                if was_ok and self.my_cid:
+                    try:
+                        await self.cq.say(
+                            self.my_cid,
+                            f"⚠️ [b]Spotify Connection Lost:[/b] Type [b]{CFG.prefix}login[/b] in chat to pair or reconnect!"
+                        )
+                    except Exception:
+                        pass
                 self.spotify_ok = False
+                was_ok = False
             await asyncio.sleep(15)
 
     async def health(self, request):

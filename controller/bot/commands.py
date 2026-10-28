@@ -52,7 +52,13 @@ async def play(ctx, arg):
         return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
 
     if not arg:
-        await ctx.lr.resume()
+        try:
+            await ctx.lr.resume()
+        except Exception:
+            return (
+                "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
+                f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
+            )
         return "Resumed."
     uri, label = to_uri(arg), arg
     if not uri:
@@ -74,7 +80,15 @@ async def play(ctx, arg):
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
-    await ctx.lr.play(uri)
+    try:
+        await ctx.lr.play(uri)
+    except Exception as e:
+        log.exception("play failed for uri=%s: %s", uri, e)
+        return (
+            "⚠️ [b]Playback Failed:[/b] Spotify was unable to stream this track.\n"
+            "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
+            f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
+        )
     return f"Playing: {label}"
 
 @command("queue", "q")
@@ -108,7 +122,15 @@ async def queue(ctx, arg):
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
-    await ctx.lr.enqueue(uri)
+    try:
+        await ctx.lr.enqueue(uri)
+    except Exception as e:
+        log.exception("queue failed for uri=%s: %s", uri, e)
+        return (
+            "⚠️ [b]Queue Failed:[/b] Spotify was unable to queue this track.\n"
+            "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
+            f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
+        )
     return f"Queued: {label}"
 
 @command("pause")
@@ -118,7 +140,13 @@ async def pause(ctx, arg):
 
 @command("resume", "r")
 async def resume(ctx, arg):
-    await ctx.lr.resume()
+    try:
+        await ctx.lr.resume()
+    except Exception:
+        return (
+            "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
+            f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
+        )
     return "Resumed."
 
 @command("skip", "next", "s")

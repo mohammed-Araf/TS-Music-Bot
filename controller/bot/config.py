@@ -11,7 +11,7 @@ class Config:
 
     cq_host: str = "127.0.0.1"
     cq_port: int = 25639
-    cq_apikey: str = os.environ.get("TS_CLIENTQUERY_APIKEY", "")
+    cq_apikey: str = os.environ.get("TS_CLIENTQUERY_APIKEY", "musicbot_default_clientquery_key")
     ts_channel: str = os.environ.get("TS_CHANNEL", "")
     ts_channel_password: str = os.environ.get("TS_CHANNEL_PASSWORD", "")
 

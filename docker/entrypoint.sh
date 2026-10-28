@@ -18,7 +18,7 @@ if [ "$SETUP_MODE" = "1" ]; then
   export CONTROLLER_AUTOSTART=false
   export SETUP_AUTOSTART=true
 else
-  : "${TS_CLIENTQUERY_APIKEY:?TS_CLIENTQUERY_APIKEY is required (see setup)}"
+  export TS_CLIENTQUERY_APIKEY="${TS_CLIENTQUERY_APIKEY:-musicbot_default_clientquery_key}"
   export SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}"
   export SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET:-}"
   export CONTROLLER_AUTOSTART=true

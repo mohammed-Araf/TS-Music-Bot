@@ -119,9 +119,19 @@ async def play(ctx, arg):
                 "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
                 f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
             )
+        was_bgm = getattr(ctx.app, "is_ambient_autoplay", False) if ctx.app else False
         if ctx.app:
             ctx.app._paused_by_empty_channel = False
             ctx.app._ready_for_ambient_autoplay = False
+            ctx.app.is_ambient_autoplay = False
+
+        if was_bgm:
+            try:
+                await ctx.lr.volume(ctx.cfg.initial_volume)
+                GUARD.mark_volume(ctx.cfg.initial_volume)
+            except Exception:
+                pass
+
         GUARD.mark_state(ACTION_PLAY)
         return f"Playing: {label}"
 
@@ -325,24 +335,44 @@ async def prev(ctx, arg):
 
 @command("vol", "volume", "v")
 async def vol(ctx, arg):
+    is_bgm = getattr(ctx.app, "is_ambient_autoplay", False)
+    if not is_bgm and ctx.app:
+        try:
+            st = await ctx.lr.status()
+            if st and st.get("context_uri") == ctx.cfg.chill_autoplay_uri:
+                is_bgm = True
+                ctx.app.is_ambient_autoplay = True
+        except Exception:
+            pass
+
+    max_v = ctx.cfg.chill_volume if is_bgm else ctx.cfg.max_volume
+
     if not arg:
         if GUARD.last_volume is not None:
-            return f"Current volume: {GUARD.last_volume}%"
+            bgm_note = f" (Locked to max {ctx.cfg.chill_volume}% for Background Music)" if is_bgm else ""
+            return f"Current volume: {GUARD.last_volume}%{bgm_note}"
         try:
             st = await ctx.lr.status()
             if st and "volume" in st:
                 GUARD.last_volume = st["volume"]
-                return f"Current volume: {st['volume']}%"
+                bgm_note = f" (Locked to max {ctx.cfg.chill_volume}% for Background Music)" if is_bgm else ""
+                return f"Current volume: {st['volume']}%{bgm_note}"
         except Exception:
             pass
-        return f"Usage: {ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>"
+        return f"Usage: {ctx.cfg.prefix}vol <0-{max_v}>"
 
     try:
         target_vol = int(arg)
     except ValueError:
-        return f"Usage: {ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>"
+        return f"Usage: {ctx.cfg.prefix}vol <0-{max_v}>"
 
-    target_vol = max(0, min(target_vol, ctx.cfg.max_volume))
+    if is_bgm and target_vol > ctx.cfg.chill_volume:
+        return (
+            f"🔒 [b]Background Chill Music is locked to a maximum of {ctx.cfg.chill_volume}% volume.[/b]\n"
+            f"Play your own song with [b]{ctx.cfg.prefix}play <song>[/b] to unlock normal volume control (up to {ctx.cfg.max_volume}%)!"
+        )
+
+    target_vol = max(0, min(target_vol, max_v))
 
     if GUARD.last_volume is not None and target_vol == GUARD.last_volume:
         return f"Volume is already {target_vol}%."
@@ -823,9 +853,45 @@ async def duck(ctx, arg):
     )
     return f"🎙️ Voice Ducking is now {state}. {detail}"
 
+@command("chill", "bgm", "ambient")
+async def chill(ctx, arg):
+    try:
+        st = await ctx.lr.status()
+    except Exception as e:
+        log.debug("status check before chill: %s", e)
+        st = None
+
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+
+    allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    if ctx.app:
+        ctx.app.is_ambient_autoplay = True
+        ctx.app._paused_by_empty_channel = False
+        ctx.app._ready_for_ambient_autoplay = False
+
+    async with GUARD.lock:
+        try:
+            await ctx.lr.volume(ctx.cfg.chill_volume)
+            GUARD.mark_volume(ctx.cfg.chill_volume)
+            await set_audio_mute(False)
+            await ctx.lr.play(ctx.cfg.chill_autoplay_uri)
+            GUARD.mark_state(ACTION_PLAY)
+            return (
+                f"☕ [b]Chill Background Music started[/b] at [b]{ctx.cfg.chill_volume}%[/b] volume.\n"
+                f"• Volume is locked to {ctx.cfg.chill_volume}% and voice ducking is disabled for BGM.\n"
+                f"• Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play regular songs and unlock full volume!"
+            )
+        except Exception as e:
+            log.warning("chill command failed: %s", e)
+            return "⚠️ Unable to start chill background music."
+
 @command("help", "h")
 async def help_(ctx, arg):
     p = ctx.cfg.prefix
-    return (f"{p}play <name|link>, {p}queue <name|link>, {p}pause, {p}resume, {p}skip, "
+    return (f"{p}play <name|link>, {p}queue <name|link>, {p}chill, {p}pause, {p}resume, {p}skip, "
             f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}duck, {p}login, {p}spotifykeys, {p}myroles | "
             f"admin: {p}logout, {p}restart, {p}reconnect, {p}audio, {p}status")

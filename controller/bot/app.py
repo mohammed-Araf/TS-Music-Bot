@@ -33,6 +33,7 @@ class App:
         self._paused_by_empty_channel: bool = False
         self._empty_channel_time: float = None
         self._ready_for_ambient_autoplay: bool = False
+        self.is_ambient_autoplay: bool = False
 
     def _cancel_unduck_timer(self):
         """Cancels any pending hysteresis hold timer."""
@@ -78,16 +79,17 @@ class App:
             # Talker started: cancel any pending hold timer immediately!
             self._cancel_unduck_timer()
             self.speaking_clients.add(clid)
-            if self.ducking_enabled:
+            # Strictly NO ducking during background chill music (BGM)
+            if self.ducking_enabled and not self.is_ambient_autoplay:
                 self._is_ducked = True
                 await set_audio_duck(True, self.duck_percent)
         elif status == "0":
             self.speaking_clients.discard(clid)
             # Talker stopped: if nobody else is talking, wait for the hold window
             if not self.speaking_clients:
-                if self.ducking_enabled and self._is_ducked:
+                if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
                     self._schedule_unduck()
-                else:
+                elif self._is_ducked:
                     self._cancel_unduck_timer()
                     await set_audio_duck(False)
                     self._is_ducked = False
@@ -101,6 +103,7 @@ class App:
             self._cancel_unduck_timer()
             await set_audio_duck(False)
             self._is_ducked = False
+            self.is_ambient_autoplay = False
             st = None
             try:
                 st = await self.lr.status()
@@ -143,6 +146,7 @@ class App:
         if was_empty and self._paused_by_empty_channel and (empty_duration <= CFG.eco_resume_window):
             self._paused_by_empty_channel = False
             self._ready_for_ambient_autoplay = False
+            self.is_ambient_autoplay = False
             log.info("User returned within %.1fs. Auto-resuming saved playback.", empty_duration)
             await set_audio_mute(False)
             try:
@@ -170,7 +174,9 @@ class App:
                 # Only autoplay chill beats if nothing is currently playing
                 if not st or st.get("paused") or st.get("stopped") or not st.get("track"):
                     log.info("Channel joined after timeout. Starting chill background music at %d%% vol.", CFG.chill_volume)
+                    self.is_ambient_autoplay = True
                     await self.lr.volume(CFG.chill_volume)
+                    GUARD.mark_volume(CFG.chill_volume)
                     await set_audio_mute(False)
                     await self.lr.play(CFG.chill_autoplay_uri)
                     if self.my_cid:
@@ -203,9 +209,9 @@ class App:
                 self._is_ducked = False
                 asyncio.create_task(self._handle_channel_empty())
             elif not self.speaking_clients:
-                if self.ducking_enabled and self._is_ducked:
+                if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
                     self._schedule_unduck()
-                else:
+                elif self._is_ducked:
                     self._cancel_unduck_timer()
                     await set_audio_duck(False)
                     self._is_ducked = False
@@ -225,9 +231,9 @@ class App:
                     self._is_ducked = False
                     asyncio.create_task(self._handle_channel_empty())
                 elif not self.speaking_clients:
-                    if self.ducking_enabled and self._is_ducked:
+                    if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
                         self._schedule_unduck()
-                    else:
+                    elif self._is_ducked:
                         self._cancel_unduck_timer()
                         await set_audio_duck(False)
                         self._is_ducked = False
@@ -254,9 +260,9 @@ class App:
                 await set_audio_duck(False)
                 self._is_ducked = False
             elif prev_speaking and not self.speaking_clients:
-                if self.ducking_enabled and self._is_ducked:
+                if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
                     self._schedule_unduck()
-                else:
+                elif self._is_ducked:
                     self._cancel_unduck_timer()
                     await set_audio_duck(False)
                     self._is_ducked = False
@@ -493,7 +499,28 @@ class App:
                     except Exception:
                         pass
 
-                    duck_tag = "Duck:ON" if self.ducking_enabled else "Duck:OFF"
+                    # Detect if currently playing chill background beats vs user track
+                    if st and st.get("context_uri") == CFG.chill_autoplay_uri:
+                        self.is_ambient_autoplay = True
+                    elif st and st.get("context_uri") and st.get("context_uri") != CFG.chill_autoplay_uri:
+                        self.is_ambient_autoplay = False
+
+                    # Enforce 20% volume ceiling while in BGM mode
+                    if self.is_ambient_autoplay and st:
+                        curr_vol = st.get("volume", CFG.chill_volume)
+                        if curr_vol > CFG.chill_volume:
+                            log.info("Enforcing %d%% volume ceiling during BGM (was %d%%)", CFG.chill_volume, curr_vol)
+                            try:
+                                await self.lr.volume(CFG.chill_volume)
+                                GUARD.mark_volume(CFG.chill_volume)
+                            except Exception:
+                                pass
+
+                    if self.is_ambient_autoplay:
+                        duck_tag = "BGM"
+                    else:
+                        duck_tag = "Duck:ON" if self.ducking_enabled else "Duck:OFF"
+
                     new_msg = None
                     away_flag = 1
 
@@ -574,7 +601,12 @@ class App:
                                 elif etype == "volume":
                                     vol = data.get("value")
                                     if vol is not None:
-                                        GUARD.mark_volume(int(vol))
+                                        if self.is_ambient_autoplay and int(vol) > CFG.chill_volume:
+                                            log.info("Clamping external volume to %d%% during BGM", CFG.chill_volume)
+                                            asyncio.create_task(self.lr.volume(CFG.chill_volume))
+                                            GUARD.mark_volume(CFG.chill_volume)
+                                        else:
+                                            GUARD.mark_volume(int(vol))
                             except Exception as ex:
                                 log.debug("Error processing player event: %s", ex)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):

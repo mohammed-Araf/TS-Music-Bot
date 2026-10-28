@@ -30,10 +30,26 @@ mkdir -p /data/home /data/librespot /tmp/pulse
 chown -R bot:bot /data /tmp/pulse
 chmod 777 /tmp/pulse
 
-# Pre-seed TS3 settings database if missing
-if [ ! -f /data/home/.ts3client/settings.db ] && [ -f /opt/bot/docker/templates/settings.db ]; then
-  mkdir -p /data/home/.ts3client
-  cp /opt/bot/docker/templates/settings.db /data/home/.ts3client/settings.db
+# Pre-seed TS3 settings, plugins, and addons if missing
+if [ -d /opt/bot/docker/templates ]; then
+  mkdir -p /data/home/.ts3client/plugins
+  if [ ! -f /data/home/.ts3client/settings.db ] && [ -f /opt/bot/docker/templates/settings.db ]; then
+    cp /opt/bot/docker/templates/settings.db /data/home/.ts3client/settings.db
+  fi
+  if [ ! -f /data/home/.ts3client/addons.ini ] && [ -f /opt/bot/docker/templates/addons.ini ]; then
+    cp /opt/bot/docker/templates/addons.ini /data/home/.ts3client/addons.ini
+  fi
+  if [ -d /opt/bot/docker/templates/plugins ]; then
+    cp -rf /opt/bot/docker/templates/plugins/* /data/home/.ts3client/plugins/
+  fi
+  if [ -n "${TS_CLIENTQUERY_APIKEY:-}" ]; then
+    cat > /data/home/.ts3client/clientquery.ini <<EOF
+[General]
+api_key=${TS_CLIENTQUERY_APIKEY}
+logging_enabled=false
+open_remote=false
+EOF
+  fi
   chown -R bot:bot /data/home/.ts3client
 fi
 

@@ -514,14 +514,20 @@ class App:
                     except Exception:
                         pass
 
+                    # Guard against race condition while user track is buffering
+                    recent_play = (GUARD.last_action_type == ACTION_PLAY and (time.time() - GUARD.last_action_time < 10.0))
+
                     # Detect if currently playing chill background beats vs user track
-                    if st and st.get("context_uri") == CFG.chill_autoplay_uri:
-                        self.is_ambient_autoplay = True
-                    elif st and (not st.get("context_uri") or st.get("context_uri") != CFG.chill_autoplay_uri):
+                    if not recent_play:
+                        if st and st.get("context_uri") == CFG.chill_autoplay_uri:
+                            self.is_ambient_autoplay = True
+                        elif st and (not st.get("context_uri") or st.get("context_uri") != CFG.chill_autoplay_uri):
+                            self.is_ambient_autoplay = False
+                    else:
                         self.is_ambient_autoplay = False
 
-                    # Enforce 20% volume ceiling while in BGM mode
-                    if self.is_ambient_autoplay and st:
+                    # Enforce 20% volume ceiling strictly while in BGM mode (never during user play transition)
+                    if self.is_ambient_autoplay and not recent_play and st:
                         curr_vol = st.get("volume", CFG.chill_volume)
                         if curr_vol > CFG.chill_volume:
                             log.info("Enforcing %d%% volume ceiling during BGM (was %d%%)", CFG.chill_volume, curr_vol)
@@ -532,7 +538,6 @@ class App:
                                 pass
 
                     # Auto-return to default ambient BGM state if channel has active users and user queue finished
-                    recent_play = (GUARD.last_action_type == ACTION_PLAY and (time.time() - GUARD.last_action_time < 10.0))
                     is_user_paused = (GUARD.last_action_type == ACTION_PAUSE and (time.time() - GUARD.last_action_time < 180.0))
                     is_buffering = bool(st and st.get("buffering"))
                     if (
@@ -632,6 +637,14 @@ class App:
                                 if etype == "playing":
                                     await set_audio_mute(False)
                                     GUARD.mark_state(ACTION_PLAY)
+                                    if not self.is_ambient_autoplay:
+                                        target_vol = getattr(self, "user_volume", CFG.initial_volume)
+                                        log.info("Track playing event. Ensuring playback is at user target volume: %d%%", target_vol)
+                                        try:
+                                            await self.lr.volume(target_vol)
+                                            GUARD.mark_volume(target_vol)
+                                        except Exception:
+                                            pass
                                 elif etype in ("paused", "stopped"):
                                     if etype == "paused":
                                         GUARD.mark_state(ACTION_PAUSE)
@@ -646,13 +659,14 @@ class App:
                                 elif etype == "volume":
                                     vol = data.get("value")
                                     if vol is not None:
-                                        self.user_volume = int(vol)
-                                        if self.is_ambient_autoplay and int(vol) > CFG.chill_volume:
-                                            log.info("Clamping external volume to %d%% during BGM", CFG.chill_volume)
-                                            asyncio.create_task(self.lr.volume(CFG.chill_volume))
-                                            GUARD.mark_volume(CFG.chill_volume)
-                                        else:
+                                        if not self.is_ambient_autoplay:
+                                            self.user_volume = int(vol)
                                             GUARD.mark_volume(int(vol))
+                                        else:
+                                            if int(vol) > CFG.chill_volume:
+                                                log.info("Clamping external volume to %d%% during BGM", CFG.chill_volume)
+                                                asyncio.create_task(self.lr.volume(CFG.chill_volume))
+                                                GUARD.mark_volume(CFG.chill_volume)
                             except Exception as ex:
                                 log.debug("Error processing player event: %s", ex)
                         elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):

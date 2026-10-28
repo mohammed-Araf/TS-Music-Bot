@@ -121,11 +121,6 @@ async def play(ctx, arg):
             ctx.app.is_ambient_autoplay = False
 
         target_vol = getattr(ctx.app, "user_volume", ctx.cfg.initial_volume) if ctx.app else ctx.cfg.initial_volume
-        try:
-            await ctx.lr.volume(target_vol)
-            GUARD.mark_volume(target_vol)
-        except Exception:
-            pass
 
         try:
             await asyncio.wait_for(ctx.lr.play(uri), timeout=15.0)
@@ -138,6 +133,13 @@ async def play(ctx, arg):
                 "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
                 f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
             )
+
+        # Ensure volume is immediately set to user's registered volume
+        try:
+            await ctx.lr.volume(target_vol)
+            GUARD.mark_volume(target_vol)
+        except Exception:
+            pass
 
         return f"Playing: {label}"
 

@@ -5,11 +5,15 @@ device_type: speaker
 
 audio_backend: pulseaudio
 audio_device: music          # PulseAudio sink name
+audio_backend_runtime_socket: "unix:/tmp/pulse.sock"
+
 
 bitrate: 320                 # Premium
 volume_steps: 100
 initial_volume: ${INITIAL_VOLUME}
 normalisation_enabled: true
+
+zeroconf_enabled: false    # Dedicated bot mode: keep device paired permanently without auto-logout
 
 credentials:
   type: device_auth          # Direct pairing via spotify.com/pair; credentials persist in /data/librespot

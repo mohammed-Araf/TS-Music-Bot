@@ -40,6 +40,7 @@ class Librespot:
     async def play(self, uri):    await self._post("/player/play", {"uri": uri})
     async def resume(self):       await self._post("/player/resume")
     async def pause(self):        await self._post("/player/pause")
+    async def playpause(self):    await self._post("/player/playpause")
     async def next(self):         await self._post("/player/next")
     async def prev(self):         await self._post("/player/prev")
     async def volume(self, v):    await self._post("/player/volume", {"volume": int(v)})

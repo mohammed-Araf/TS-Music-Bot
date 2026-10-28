@@ -133,31 +133,69 @@ async def queue(ctx, arg):
         )
     return f"Queued: {label}"
 
-@command("pause")
+@command("pause", "stop")
 async def pause(ctx, arg):
-    await ctx.lr.pause()
-    return "Paused."
+    try:
+        st = await ctx.lr.status()
+    except Exception:
+        st = None
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+    if st.get("paused"):
+        return "Already paused."
+    if st.get("stopped") and not st.get("track"):
+        return "Nothing is currently playing."
+    try:
+        await ctx.lr.pause()
+        return "⏸️ Playback paused."
+    except Exception as e:
+        log.warning("pause failed, trying playpause fallback: %s", e)
+        try:
+            await ctx.lr.playpause()
+            return "⏸️ Playback paused."
+        except Exception as e2:
+            log.exception("pause and playpause failed: %s", e2)
+            return (
+                "⚠️ [b]Pause Failed:[/b] Unable to pause playback.\n"
+                f"Type [b]{ctx.cfg.prefix}status[/b] to check player state."
+            )
 
 @command("resume", "r")
 async def resume(ctx, arg):
     try:
+        st = await ctx.lr.status()
+    except Exception:
+        st = None
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+    if not st.get("paused") and not st.get("stopped"):
+        return "Already playing."
+    try:
         await ctx.lr.resume()
+        return "▶️ Playback resumed."
     except Exception:
         return (
             "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
             f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
         )
-    return "Resumed."
 
 @command("skip", "next", "s")
 async def skip(ctx, arg):
-    await ctx.lr.next()
-    return "Skipped."
+    try:
+        await ctx.lr.next()
+        return "⏭️ Skipped to next track."
+    except Exception as e:
+        log.warning("skip failed: %s", e)
+        return "⚠️ Unable to skip track. Check if a playlist or queue is active."
 
 @command("prev", "back")
 async def prev(ctx, arg):
-    await ctx.lr.prev()
-    return "Previous track."
+    try:
+        await ctx.lr.prev()
+        return "⏮️ Returned to previous track."
+    except Exception as e:
+        log.warning("prev failed: %s", e)
+        return "⚠️ Unable to return to previous track."
 
 @command("vol", "volume", "v")
 async def vol(ctx, arg):

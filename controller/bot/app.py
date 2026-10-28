@@ -69,8 +69,8 @@ class App:
         now = time.time()
         if now - self.last_cmd.get(uid, 0) < CFG.cooldown:
             return
-        self.last_cmd[uid] = now
-        ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid, server_groups=user_groups, channel_group=ch_group)
+        ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid,
+                  server_groups=user_groups, channel_group=ch_group, is_admin=is_admin)
         try:
             reply = await handler(ctx, arg.strip())
         except Exception as e:
@@ -142,8 +142,8 @@ class App:
     async def spotify_loop(self):
         while True:
             try:
-                await self.lr.status()
-                self.spotify_ok = True
+                st = await self.lr.status()
+                self.spotify_ok = bool(st and st.get("username"))
             except Exception:
                 self.spotify_ok = False
             await asyncio.sleep(15)

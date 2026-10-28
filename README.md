@@ -130,20 +130,33 @@ All commands use the prefix defined in `.env.common` (default `!`):
 
 | Command | Permission | Description |
 |---|---|---|
-| `!play <query \| link>` | Everyone | Search & play, or stream direct Spotify track/album/playlist URL. Resumes if empty. |
-| `!queue <query \| link>` | Everyone | Add track or Spotify URL to playback queue. |
-| `!pause` | Everyone | Pause playback. |
-| `!resume` (or `!r`) | Everyone | Resume playback. |
-| `!skip` (or `!next`, `!s`) | Everyone | Skip to next track. |
-| `!prev` (or `!back`) | Everyone | Return to previous track. |
-| `!vol <0-80>` (or `!v`) | Everyone | Adjust volume (clamped to `MAX_VOLUME`). |
-| `!np` | Everyone | Show currently playing song title and artist. |
+| `!play <query \| link>` | Everyone / Allowed Role | Search & play, or stream direct Spotify track/album/playlist URL. Resumes if empty. |
+| `!queue <query \| link>` | Everyone / Allowed Role | Add track or Spotify URL to playback queue. |
+| `!pause` | Everyone / Allowed Role | Pause playback. |
+| `!resume` (or `!r`) | Everyone / Allowed Role | Resume playback. |
+| `!skip` (or `!next`, `!s`) | Everyone / Allowed Role | Skip to next track. |
+| `!prev` (or `!back`) | Everyone / Allowed Role | Return to previous track. |
+| `!vol <0-80>` (or `!v`) | Everyone / Allowed Role | Adjust volume (clamped to `MAX_VOLUME`). |
+| `!np` | Everyone / Allowed Role | Show currently playing song title and artist. |
+| `!login` (or `!pair`) | Allowed Role / Admin | Pair a Spotify Premium account directly via `spotify.com/pair` link. |
 | `!myroles` | Everyone | View your current UID, Server Group IDs, and Channel Group ID. |
 | `!help` | Everyone | Show list of available commands. |
+| `!logout` | Admin | Unlink currently paired Spotify account. |
 | `!restart` | Admin | Restart the container process. |
 | `!reconnect` | Admin | Reconnect TeamSpeak 3 client to the channel. |
 | `!audio` | Admin | Restart `go-librespot` audio engine. |
-| `!status` | Admin | Check Spotify API connection and health. |
+| `!status` | Admin | Check Spotify connection status, active user, and health. |
+
+### 🔗 Easy Spotify Pairing via TeamSpeak Chat
+
+No VNC, terminal access, or SSH port forwarding is required to link or switch Spotify accounts:
+1. Make sure your bot container is running (`docker compose up -d bot1`).
+2. In the TeamSpeak channel chat, type **`!login`** (or **`!pair`**).
+3. The bot immediately replies with a Spotify pairing link: `https://spotify.com/pair?code=XXXXXX`.
+4. Open the link on any phone or browser, log in to your Spotify Premium account, and click **Pair / Confirm**.
+5. Within seconds, the bot automatically links and announces in chat:
+   `✅ Spotify Connected! Successfully paired as <username>. Ready to play music!`
+6. If your subscription ever expires or you want to switch accounts, anyone with the music role can type `!login` (or an admin can type `!login force` or `!logout`).
 
 ### Role-Based Access Control (RBAC)
 

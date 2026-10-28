@@ -12,9 +12,7 @@ initial_volume: ${INITIAL_VOLUME}
 normalisation_enabled: true
 
 credentials:
-  type: interactive          # OAuth login once; credentials then persist in /data/librespot
-  interactive:
-    callback_port: 8888
+  type: device_auth          # Direct pairing via spotify.com/pair; credentials persist in /data/librespot
 
 server:                      # local control API used by the controller
   enabled: true

@@ -25,6 +25,15 @@ class Librespot:
 
     async def status(self):
         async with self.s.get(self.base + "/status", timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status == 204:
+                return None
+            r.raise_for_status()
+            return await r.json()
+
+    async def auth_code(self):
+        async with self.s.get(self.base + "/auth/code", timeout=aiohttp.ClientTimeout(total=5)) as r:
+            if r.status == 204:
+                return None
             r.raise_for_status()
             return await r.json()
 

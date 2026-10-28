@@ -42,6 +42,23 @@ class App:
             self._unduck_timer_task.cancel()
         self._unduck_timer_task = None
 
+    async def _return_to_bgm(self):
+        """Returns to default ambient background music at chill_volume."""
+        if not self.spotify_ok or not self.channel_clients:
+            return
+        self.is_ambient_autoplay = True
+        self._paused_by_empty_channel = False
+        self._ready_for_ambient_autoplay = False
+        try:
+            await self.lr.volume(CFG.chill_volume)
+            GUARD.mark_volume(CFG.chill_volume)
+            await set_audio_mute(False)
+            await self.lr.play(CFG.chill_autoplay_uri)
+            GUARD.mark_state(ACTION_PLAY)
+            log.info("Started default BGM at %d%% vol.", CFG.chill_volume)
+        except Exception as e:
+            log.warning("Failed to start default BGM: %s", e)
+
     def _schedule_unduck(self):
         """
         Schedules unducking with a hold window (hysteresis delay).
@@ -175,12 +192,7 @@ class App:
                 st = await self.lr.status()
                 # If nothing is actively playing, start background chill music
                 if not st or st.get("paused") or st.get("stopped") or not st.get("track"):
-                    log.info("Channel joined with no active track. Starting default chill background music at %d%% vol.", CFG.chill_volume)
-                    self.is_ambient_autoplay = True
-                    await self.lr.volume(CFG.chill_volume)
-                    GUARD.mark_volume(CFG.chill_volume)
-                    await set_audio_mute(False)
-                    await self.lr.play(CFG.chill_autoplay_uri)
+                    await self._return_to_bgm()
                     if self.my_cid:
                         await self.cq.say(
                             self.my_cid,
@@ -520,25 +532,18 @@ class App:
                                 pass
 
                     # Auto-return to default ambient BGM state if channel has active users and user queue finished
+                    is_user_paused = (GUARD.last_action_type == ACTION_PAUSE and (time.time() - GUARD.last_action_time < 180.0))
                     if (
                         CFG.eco_mode
                         and bool(self.channel_clients)
                         and self.spotify_ok
                         and not self.is_ambient_autoplay
                         and not self._paused_by_empty_channel
-                        and GUARD.last_action_type != ACTION_PAUSE
+                        and not is_user_paused
                     ):
-                        if not st or st.get("stopped") or not st.get("track"):
-                            log.info("Playback ended with users in channel. Returning to default ambient chill music.")
-                            self.is_ambient_autoplay = True
-                            try:
-                                await self.lr.volume(CFG.chill_volume)
-                                GUARD.mark_volume(CFG.chill_volume)
-                                await set_audio_mute(False)
-                                await self.lr.play(CFG.chill_autoplay_uri)
-                                GUARD.mark_state(ACTION_PLAY)
-                            except Exception as e:
-                                log.debug("Failed to return to default BGM: %s", e)
+                        if not st or st.get("stopped") or not st.get("track") or st.get("paused"):
+                            log.info("Playback ended or stopped with users in channel. Returning to default ambient chill music.")
+                            await self._return_to_bgm()
 
                     if self.is_ambient_autoplay:
                         duck_tag = "BGM"
@@ -624,8 +629,16 @@ class App:
                                     await set_audio_mute(False)
                                     GUARD.mark_state(ACTION_PLAY)
                                 elif etype in ("paused", "stopped"):
-                                    await set_audio_mute(True)
-                                    GUARD.mark_state(ACTION_PAUSE if etype == "paused" else ACTION_STOP)
+                                    if etype == "paused":
+                                        GUARD.mark_state(ACTION_PAUSE)
+                                        await set_audio_mute(True)
+                                    else:
+                                        GUARD.mark_state(ACTION_STOP)
+                                        if bool(self.channel_clients) and not self.is_ambient_autoplay:
+                                            log.info("Track stopped event with users in channel. Returning to default BGM.")
+                                            asyncio.create_task(self._return_to_bgm())
+                                        else:
+                                            await set_audio_mute(True)
                                 elif etype == "volume":
                                     vol = data.get("value")
                                     if vol is not None:

@@ -253,19 +253,18 @@ async def stop(ctx, arg):
     if not allowed:
         return reason
 
-    # Instantly mute PulseAudio capture/sink for immediate silence
+    app = ctx.app
+    has_users = bool(app.channel_clients) if app else True
+
+    # If users are in the channel, returning to default BGM is immediate and mandatory
+    if has_users and app and app.spotify_ok:
+        async with GUARD.lock:
+            await app._return_to_bgm()
+            return "⏹️ Playback stopped. Returned to default background music."
+
+    # If channel has no users, stop audio completely
     await set_audio_mute(True)
-
     async with GUARD.lock:
-        try:
-            st = await ctx.lr.status()
-        except Exception as e:
-            log.debug("status check before stop: %s", e)
-            st = None
-
-        if not st or not st.get("username"):
-            await set_audio_mute(False)
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
         try:
             await asyncio.wait_for(ctx.lr.pause(), timeout=8.0)
         except Exception as e:

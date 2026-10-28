@@ -96,7 +96,7 @@ Run the bot in interactive setup mode:
 
 ```bash
 mkdir -p data/bot1
-docker compose run --rm --service-ports --name tsbot1-setup \
+docker compose run --rm --name tsbot1-setup \
   -e SETUP_MODE=1 -e VNC_PASSWORD=myvncpass \
   -p 127.0.0.1:8888:8889 -p 127.0.0.1:5900:5900 \
   bot1

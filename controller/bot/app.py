@@ -532,7 +532,9 @@ class App:
                                 pass
 
                     # Auto-return to default ambient BGM state if channel has active users and user queue finished
+                    recent_play = (GUARD.last_action_type == ACTION_PLAY and (time.time() - GUARD.last_action_time < 10.0))
                     is_user_paused = (GUARD.last_action_type == ACTION_PAUSE and (time.time() - GUARD.last_action_time < 180.0))
+                    is_buffering = bool(st and st.get("buffering"))
                     if (
                         CFG.eco_mode
                         and bool(self.channel_clients)
@@ -540,8 +542,10 @@ class App:
                         and not self.is_ambient_autoplay
                         and not self._paused_by_empty_channel
                         and not is_user_paused
+                        and not recent_play
+                        and not is_buffering
                     ):
-                        if not st or st.get("stopped") or not st.get("track") or st.get("paused"):
+                        if not st or st.get("stopped") or not st.get("track"):
                             log.info("Playback ended or stopped with users in channel. Returning to default ambient chill music.")
                             await self._return_to_bgm()
 

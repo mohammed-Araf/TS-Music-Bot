@@ -113,19 +113,8 @@ async def play(ctx, arg):
         return reason
 
     async with GUARD.lock:
+        GUARD.mark_state(ACTION_PLAY)
         await set_audio_mute(False)
-        try:
-            await asyncio.wait_for(ctx.lr.play(uri), timeout=15.0)
-        except asyncio.TimeoutError:
-            return "⏳ Spotify is taking longer than usual to buffer this track. Please wait a moment."
-        except Exception as e:
-            log.exception("play failed for uri=%s: %s", uri, e)
-            return (
-                "⚠️ [b]Playback Failed:[/b] Spotify was unable to stream this track.\n"
-                "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
-                f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
-            )
-        was_bgm = getattr(ctx.app, "is_ambient_autoplay", False) if ctx.app else False
         if ctx.app:
             ctx.app._paused_by_empty_channel = False
             ctx.app._ready_for_ambient_autoplay = False
@@ -138,7 +127,18 @@ async def play(ctx, arg):
         except Exception:
             pass
 
-        GUARD.mark_state(ACTION_PLAY)
+        try:
+            await asyncio.wait_for(ctx.lr.play(uri), timeout=15.0)
+        except asyncio.TimeoutError:
+            return "⏳ Spotify is taking longer than usual to buffer this track. Please wait a moment."
+        except Exception as e:
+            log.exception("play failed for uri=%s: %s", uri, e)
+            return (
+                "⚠️ [b]Playback Failed:[/b] Spotify was unable to stream this track.\n"
+                "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
+                f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
+            )
+
         return f"Playing: {label}"
 
 @command("queue", "q")

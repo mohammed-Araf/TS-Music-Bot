@@ -1,5 +1,6 @@
 import os, json, time, asyncio, subprocess, logging
 from .spotify import to_uri, SpotifyRateLimitError, SpotifyAuthError
+from .pulse import set_audio_mute
 
 log = logging.getLogger("commands")
 
@@ -28,12 +29,13 @@ def command(name, *aliases, admin=False):
     return deco
 
 class Ctx:
-    def __init__(self, cfg, cq, lr, search, uid, nick, cid, server_groups=None, channel_group=None, is_admin=False):
+    def __init__(self, cfg, cq, lr, search, uid, nick, cid, server_groups=None, channel_group=None, is_admin=False, cmd=""):
         self.cfg, self.cq, self.lr, self.search = cfg, cq, lr, search
         self.uid, self.nick, self.cid = uid, nick, cid
         self.server_groups = server_groups or set()
         self.channel_group = channel_group or ""
         self.is_admin = is_admin
+        self.cmd = cmd
 
 def _supervisor(*args):
     return subprocess.run(
@@ -52,6 +54,7 @@ async def play(ctx, arg):
         log.debug("status check before play: %s", e)
 
     if not arg:
+        await set_audio_mute(False)
         try:
             await ctx.lr.resume()
         except Exception:
@@ -80,6 +83,7 @@ async def play(ctx, arg):
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
+    await set_audio_mute(False)
     try:
         await ctx.lr.play(uri)
     except Exception as e:
@@ -133,16 +137,15 @@ async def queue(ctx, arg):
         )
     return f"Queued: {label}"
 
-@command("pause", "stop")
+@command("pause")
 async def pause(ctx, arg):
+    # Instantly mute PulseAudio capture/sink for zero-delay hardware silence
+    await set_audio_mute(True)
     try:
         st = await ctx.lr.status()
         if st is not None and not st.get("username"):
+            await set_audio_mute(False)
             return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-        if st and st.get("paused"):
-            return "Already paused."
-        if st and st.get("stopped") and not st.get("track"):
-            return "Nothing is currently playing."
     except Exception as e:
         log.debug("status check before pause: %s", e)
     try:
@@ -155,13 +158,28 @@ async def pause(ctx, arg):
             return "⏸️ Playback paused."
         except Exception as e2:
             log.exception("pause and playpause failed: %s", e2)
-            return (
-                "⚠️ [b]Pause Failed:[/b] Player is currently busy loading.\n"
-                f"Type [b]{ctx.cfg.prefix}status[/b] to check player state."
-            )
+            return "⏸️ Playback paused."
+
+@command("stop")
+async def stop(ctx, arg):
+    # Instantly mute PulseAudio capture/sink for immediate silence
+    await set_audio_mute(True)
+    try:
+        st = await ctx.lr.status()
+        if st is not None and not st.get("username"):
+            await set_audio_mute(False)
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+    except Exception as e:
+        log.debug("status check before stop: %s", e)
+    try:
+        await ctx.lr.pause()
+    except Exception as e:
+        log.warning("pause during stop failed: %s", e)
+    return "⏹️ Playback stopped."
 
 @command("resume", "r")
 async def resume(ctx, arg):
+    await set_audio_mute(False)
     try:
         st = await ctx.lr.status()
         if st is not None and not st.get("username"):
@@ -188,6 +206,7 @@ async def skip(ctx, arg):
     if now - _last_skip_time < 1.5:
         return "⏳ Skip already in progress..."
     _last_skip_time = now
+    await set_audio_mute(False)
     try:
         await ctx.lr.next()
         return "⏭️ Skipped to next track."
@@ -197,6 +216,7 @@ async def skip(ctx, arg):
 
 @command("prev", "back")
 async def prev(ctx, arg):
+    await set_audio_mute(False)
     try:
         await ctx.lr.prev()
         return "⏮️ Returned to previous track."

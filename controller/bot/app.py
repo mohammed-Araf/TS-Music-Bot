@@ -70,7 +70,7 @@ class App:
         if now - self.last_cmd.get(uid, 0) < CFG.cooldown:
             return
         ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid,
-                  server_groups=user_groups, channel_group=ch_group, is_admin=is_admin)
+                  server_groups=user_groups, channel_group=ch_group, is_admin=is_admin, cmd=cmd_lower)
         try:
             reply = await handler(ctx, arg.strip())
         except Exception as e:

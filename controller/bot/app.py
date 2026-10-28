@@ -27,7 +27,9 @@ class App:
         self.duck_percent = CFG.duck_percent
         self.channel_clients = set()
         self.speaking_clients = set()
-        self._eco_idle_start = None
+        self._paused_by_empty_channel: bool = False
+        self._empty_channel_time: float = None
+        self._ready_for_ambient_autoplay: bool = False
 
     async def _handle_talk_status(self, f):
         clid = f.get("clid")
@@ -46,6 +48,93 @@ class App:
             if not self.speaking_clients:
                 await set_audio_duck(False)
 
+    async def _handle_channel_empty(self):
+        """Immediately pauses playback and sets bot away when the last user leaves."""
+        if not CFG.eco_mode:
+            return
+        if self._empty_channel_time is None:
+            self._empty_channel_time = time.time()
+            st = None
+            try:
+                st = await self.lr.status()
+            except Exception:
+                pass
+
+            was_playing = bool(st and not st.get("paused") and not st.get("stopped") and st.get("track"))
+            self._paused_by_empty_channel = was_playing
+
+            if was_playing:
+                log.info("Channel emptied. Instantly pausing audio and setting away status.")
+                try:
+                    await self.lr.pause()
+                except Exception:
+                    pass
+                await set_audio_mute(True)
+
+            away_msg = "⏸️ Paused (Empty Channel)" if was_playing else "⏸️ Idle (Empty Channel)"
+            try:
+                await self.cq.cmd(f"clientupdate client_away=1 client_away_message={escape(away_msg)}")
+            except Exception:
+                pass
+
+    async def _handle_channel_active(self):
+        """Called when a user enters the channel."""
+        if not CFG.eco_mode:
+            return
+
+        was_empty = (self._empty_channel_time is not None)
+        empty_duration = time.time() - self._empty_channel_time if was_empty else 0
+        self._empty_channel_time = None
+
+        # Clear away status immediately
+        try:
+            await self.cq.cmd("clientupdate client_away=0 client_away_message=")
+        except Exception:
+            pass
+
+        # Case 1: User returned within 5 minutes (auto-resume their saved track!)
+        if was_empty and self._paused_by_empty_channel and (empty_duration <= CFG.eco_resume_window):
+            self._paused_by_empty_channel = False
+            self._ready_for_ambient_autoplay = False
+            log.info("User returned within %.1fs. Auto-resuming saved playback.", empty_duration)
+            await set_audio_mute(False)
+            try:
+                await self.lr.resume()
+                if self.my_cid:
+                    await self.cq.say(
+                        self.my_cid,
+                        "👋 [b]Welcome back![/b] Resuming music right where you left off."
+                    )
+            except Exception as e:
+                log.warning("Failed to auto-resume: %s", e)
+            return
+
+        # Case 2: 5 minutes have passed or bot was idle -> Auto-play chill background beats on low volume!
+        should_autoplay_chill = (
+            (was_empty and (self._ready_for_ambient_autoplay or empty_duration > CFG.eco_resume_window))
+            or self._ready_for_ambient_autoplay
+        )
+        self._paused_by_empty_channel = False
+        self._ready_for_ambient_autoplay = False
+
+        if should_autoplay_chill and self.spotify_ok:
+            try:
+                st = await self.lr.status()
+                # Only autoplay chill beats if nothing is currently playing
+                if not st or st.get("paused") or st.get("stopped") or not st.get("track"):
+                    log.info("Channel joined after timeout. Starting chill background music at %d%% vol.", CFG.chill_volume)
+                    await self.lr.volume(CFG.chill_volume)
+                    await set_audio_mute(False)
+                    await self.lr.play(CFG.chill_autoplay_uri)
+                    if self.my_cid:
+                        await self.cq.say(
+                            self.my_cid,
+                            f"👋 [b]Welcome to the channel![/b] Playing background chill beats at low volume ({CFG.chill_volume}%).\n"
+                            f"👉 Type [b]{CFG.prefix}play <song>[/b] anytime to play your own music!"
+                        )
+            except Exception as e:
+                log.debug("Chill autoplay exception: %s", e)
+
     async def _handle_client_change(self, name, f):
         clid = f.get("clid")
         if not clid or clid == self.my_clid:
@@ -54,35 +143,31 @@ class App:
         if name == "notifycliententerview":
             ctid = f.get("ctid")
             if ctid == self.my_cid:
+                prev_count = len(self.channel_clients)
                 self.channel_clients.add(clid)
-                self._eco_idle_start = None
+                if prev_count == 0:
+                    asyncio.create_task(self._handle_channel_active())
         elif name == "notifyclientleftview":
             self.channel_clients.discard(clid)
             self.speaking_clients.discard(clid)
             if not self.speaking_clients:
                 await set_audio_duck(False)
-            self._check_eco_idle()
+            if not self.channel_clients:
+                asyncio.create_task(self._handle_channel_empty())
         elif name == "notifyclientmoved":
             ctid = f.get("ctid")
             if ctid == self.my_cid:
+                prev_count = len(self.channel_clients)
                 self.channel_clients.add(clid)
-                self._eco_idle_start = None
+                if prev_count == 0:
+                    asyncio.create_task(self._handle_channel_active())
             else:
                 self.channel_clients.discard(clid)
                 self.speaking_clients.discard(clid)
                 if not self.speaking_clients:
                     await set_audio_duck(False)
-                self._check_eco_idle()
-
-    def _check_eco_idle(self):
-        if not CFG.eco_mode:
-            return
-        if not self.channel_clients:
-            if self._eco_idle_start is None:
-                self._eco_idle_start = time.time()
-                log.info("Music channel is empty; started Eco Mode idle timer (5m).")
-        else:
-            self._eco_idle_start = None
+                if not self.channel_clients:
+                    asyncio.create_task(self._handle_channel_empty())
 
     async def _sync_channel_clients(self):
         if not self.my_cid:
@@ -97,11 +182,16 @@ class App:
                 ctype = parts.get("client_type")
                 if cid and cid != self.my_clid and ctype != "1":
                     curr.add(cid)
+            prev_empty = (len(self.channel_clients) == 0)
             self.channel_clients = curr
             self.speaking_clients &= self.channel_clients
             if not self.speaking_clients:
                 await set_audio_duck(False)
-            self._check_eco_idle()
+
+            if len(self.channel_clients) == 0 and not prev_empty:
+                asyncio.create_task(self._handle_channel_empty())
+            elif len(self.channel_clients) > 0 and prev_empty:
+                asyncio.create_task(self._handle_channel_active())
         except Exception as e:
             log.debug("Failed to sync channel clients: %s", e)
 
@@ -313,17 +403,15 @@ class App:
         while True:
             try:
                 if self.ts_ok and self.cq and self.cq.connected:
-                    # Enforce Eco Mode
-                    if CFG.eco_mode and self._eco_idle_start and (time.time() - self._eco_idle_start > 300):
-                        try:
-                            st = await self.lr.status()
-                            if st and not st.get("paused") and not st.get("stopped"):
-                                log.info("Eco Mode: Channel empty for 5 minutes. Auto-pausing playback.")
-                                await self.lr.pause()
-                                await set_audio_mute(True)
-                                self._eco_idle_start = None
-                        except Exception:
-                            pass
+                    # While channel is empty, maintain away state and check 5m resume window expiration
+                    if CFG.eco_mode and not self.channel_clients:
+                        if self._paused_by_empty_channel and self._empty_channel_time:
+                            if time.time() - self._empty_channel_time > CFG.eco_resume_window:
+                                log.info("Eco Mode: 5-minute resume window expired. Armed chill ambient beats for next join.")
+                                self._paused_by_empty_channel = False
+                                self._ready_for_ambient_autoplay = True
+                        await asyncio.sleep(CFG.ticker_interval)
+                        continue
 
                     # Fetch Spotify state for UI
                     st = None

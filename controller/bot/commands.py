@@ -119,6 +119,9 @@ async def play(ctx, arg):
                 "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
                 f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
             )
+        if ctx.app:
+            ctx.app._paused_by_empty_channel = False
+            ctx.app._ready_for_ambient_autoplay = False
         GUARD.mark_state(ACTION_PLAY)
         return f"Playing: {label}"
 

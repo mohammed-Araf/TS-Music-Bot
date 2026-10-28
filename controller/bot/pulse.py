@@ -45,39 +45,57 @@ async def set_audio_mute(mute: bool) -> bool:
             log.warning("Failed to set PulseAudio mute state (%s): %s", mute, e)
             return False
 
-_current_duck_state = None
+_current_sink_volume: int = 100
+_fade_task = None
 _duck_lock = asyncio.Lock()
 
-async def set_audio_duck(duck: bool, duck_pct: int = 30) -> bool:
-    """
-    Hardware-level voice ducking via PulseAudio sink volume.
-    When duck=True, reduces sink volume to duck_pct (default 30%).
-    When duck=False, restores sink volume to 100%.
-    """
-    global _current_duck_state
+async def _fade_worker(target: int, duck: bool):
+    global _current_sink_volume
+    start = _current_sink_volume
+    if start == target:
+        return
 
-    desired_pct = max(5, min(duck_pct, 95)) if duck else 100
-    state_key = (duck, desired_pct)
-    if _current_duck_state == state_key:
-        return True
+    # 300ms for ducking down (6 steps of 50ms)
+    # 500ms for releasing back up (8 steps of 60ms)
+    steps = 6 if duck else 8
+    step_delay = 0.05 if duck else 0.06
+    diff = target - start
 
-    async with _duck_lock:
-        if _current_duck_state == state_key:
-            return True
-
-        val = f"{desired_pct}%"
-        try:
+    try:
+        for i in range(1, steps + 1):
+            vol = int(start + (diff * (i / steps)))
             proc = await asyncio.create_subprocess_exec(
-                "pactl", "set-sink-volume", "music", val,
+                "pactl", "set-sink-volume", "music", f"{vol}%",
                 env=PULSE_ENV,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL
             )
             await proc.wait()
-            _current_duck_state = state_key
-            log.debug("PulseAudio ducking set to %s (val=%s)", duck, val)
-            return True
-        except Exception as e:
-            log.warning("Failed to set PulseAudio ducking state (%s): %s", duck, e)
-            return False
+            _current_sink_volume = vol
+            await asyncio.sleep(step_delay)
+        _current_sink_volume = target
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.warning("Fade worker error: %s", e)
+
+async def set_audio_duck(duck: bool, duck_pct: int = 30) -> bool:
+    """
+    Smooth, broadcast-grade voice ducking via progressive volume interpolation.
+    Fades down to duck_pct over ~300ms when someone speaks, and smoothly fades
+    back up to 100% over ~500ms when they stop.
+    """
+    global _fade_task
+
+    target = max(5, min(duck_pct, 95)) if duck else 100
+
+    async with _duck_lock:
+        if _fade_task and not _fade_task.done():
+            _fade_task.cancel()
+            try:
+                await _fade_task
+            except asyncio.CancelledError:
+                pass
+        _fade_task = asyncio.create_task(_fade_worker(target, duck))
+    return True
 

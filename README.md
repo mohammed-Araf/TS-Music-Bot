@@ -15,20 +15,117 @@
 
 ## 💻 System Requirements
 
-You do **not** need a dedicated server or VPS. You can run this bot directly on your everyday PC or laptop for gaming sessions and music parties!
+You can run this bot directly on your everyday PC or laptop for gaming sessions, or host it 24/7 on an affordable Linux VPS!
 
-| Component | Minimum | Recommended |
+| Component | Local PC (Gaming / Party) | 24/7 Cloud VPS (Hosting Online) |
 |---|---|---|
-| **Operating System** | Windows 10/11 (with WSL2), macOS (Intel/M-series), or Linux (Ubuntu, Debian, Fedora, Arch) | Any 64-bit OS with Docker support |
-| **Processor (CPU)** | 1 Core (1.5 GHz+) | 2 Cores or higher |
-| **Memory (RAM)** | 1 GB free RAM | 2 GB free RAM |
+| **Operating System** | Windows 10/11 (with WSL2), macOS, or Linux | Ubuntu 22.04 / 24.04 LTS, Debian 12, or any Linux |
+| **Processor (CPU)** | 1 Core (1.5 GHz+) | 1 vCPU (Hetzner, DigitalOcean, Oracle Cloud, etc.) |
+| **Memory (RAM)** | 1 GB free RAM | 1 GB RAM (512MB + swap also supported) |
 | **Disk Space** | 2 GB free disk space | 3 GB free disk space |
-| **Network** | Stable broadband internet connection | Low ping connection to your TeamSpeak 3 server |
-| **Software** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/Mac) or Docker Engine (Linux) | Docker Compose v2 (included with Docker Desktop) |
-| **Accounts** | 1x Spotify Premium Account (Individual, Student, Duo, or Family) | TeamSpeak 3 server with permissions to join & talk |
+| **Network** | Stable broadband internet | Any VPS with public internet access |
+| **Software** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Docker & Docker Compose (auto-installed by `install.sh`!) |
+| **Accounts** | 1x Spotify Premium Account | 1x Spotify Premium Account |
 
 > [!TIP]
 > **Audio Quality:** Set your TeamSpeak music channel's audio codec to **Opus Music** with quality set to **10** (in Channel Edit Settings) for crystal-clear 320kbps streaming!
+
+---
+
+## ☁️ Beginner Guide: 24/7 Cloud Hosting (VPS / Dedicated Server)
+
+Want your music bot running 24/7 without keeping your personal computer turned on? Rent any affordable Linux VPS ($2–$4/month from Hetzner, DigitalOcean, Linode, OVH, or Oracle Cloud Free Tier) running Ubuntu 22.04 or 24.04 LTS.
+
+### ⚡ Method A: The 1-Command All-in-One Installer (Recommended)
+
+You don't need to manually install Docker, edit configuration files with nano, or configure containers. Run this single command in your VPS terminal:
+
+```bash
+git clone https://github.com/mohammed-Araf/TS-Music-Bot.git && cd TS-Music-Bot && bash install.sh
+```
+
+#### 💡 Can I configure it directly inside the script?
+**Yes!** If you prefer editing files over interactive terminal prompts, you can simply open `install.sh` in any text editor and customize the settings at the top of the file:
+```bash
+# ⚙️ CONFIGURATION SETTINGS (at the top of install.sh)
+TS_HOST="ts.example.com"          # Your TeamSpeak server IP or domain
+TS_PORT="9987"                    # TeamSpeak server port (default: 9987)
+TS_CHANNEL="Music"                # Target channel name
+TS_NICK="MusicBot1"               # Bot nickname in TeamSpeak
+```
+Then run `bash install.sh -y` to auto-deploy with your saved settings!
+
+#### 🤖 What `install.sh` does automatically:
+1. **Checks Docker:** If Docker is already installed, it skips installation. If missing, it installs the official Docker Engine and Compose plugin automatically.
+2. **Checks / Overwrites Configuration:** Prompts you for your server details (or uses the values from the top of the script) and generates `.env.common` and `bots/bot1.env`.
+3. **Downloads Missing Dependencies:** Automatically prepares data directories and pulls the pre-built container.
+4. **Starts the Bot:** Launches the container in the background (`docker compose up -d bot1`).
+
+---
+
+### 🛠️ Method B: Step-by-Step Manual Setup
+
+If you prefer configuring everything manually:
+
+#### Step 1: Connect to your VPS and Install Docker
+```bash
+# SSH into your VPS
+ssh root@your_vps_ip
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+```
+
+#### Step 2: Clone the Repository
+```bash
+git clone https://github.com/mohammed-Araf/TS-Music-Bot.git
+cd TS-Music-Bot
+```
+
+#### Step 3: Configure Settings
+```bash
+# Copy example configuration templates
+cp .env.common.example .env.common
+cp bots/bot1.example.env bots/bot1.env
+
+# Edit server details
+nano .env.common
+```
+Fill in your `TS_HOST`, `TS_PORT`, and `TS_CHANNEL`. Press `Ctrl+O` then `Enter` to save, and `Ctrl+X` to exit.
+
+#### Step 4: Start the Bot
+```bash
+docker compose up -d bot1
+```
+
+---
+
+### 🔗 Pairing Spotify on VPS (Zero GUI / No VNC Required!)
+
+Once the bot starts on your VPS:
+1. Join your TeamSpeak server and enter the music channel.
+2. In the channel chat, type:
+   ```text
+   !login
+   ```
+3. The bot will send you a pairing link: `https://spotify.com/pair?code=XXXXXX`.
+4. Open the link on your phone or PC browser, log in to Spotify Premium, and tap **Pair**.
+5. The bot connects immediately and is ready to stream 24/7!
+
+---
+
+### 🛡️ VPS Maintenance & Management Commands
+
+| Action | Command |
+|---|---|
+| **View live logs** | `docker compose logs -f bot1` |
+| **Restart the bot** | `docker compose restart bot1` |
+| **Stop the bot** | `docker compose down` |
+| **Start the bot** | `docker compose up -d bot1` |
+| **Reconfigure settings** | `bash install.sh` |
+
+> [!NOTE]
+> **Auto-Start on Reboot:** The container is configured with `restart: unless-stopped`. If your VPS reboots, the music bot will automatically start itself back up without you having to log into SSH!
 
 ---
 
@@ -56,6 +153,7 @@ Want to play music with your friends in TeamSpeak right now without renting a cl
    ```
    *(Optional: If your channel has a password, enter `TS_CHANNEL_PASSWORD=yourpass`)*.
 4. *(Optional)* In `bots/bot1.env`, you can change `TS_NICK=MyMusicBot` to your preferred bot nickname. Save and close the files.
+*(Mac / Linux users can also simply double-click or run `bash install.sh` to configure and start automatically!)*
 
 ### Step 4: Start the Bot
 Open your terminal (Command Prompt, PowerShell, or macOS Terminal) inside the bot folder, and run:

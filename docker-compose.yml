@@ -19,7 +19,11 @@ services:
   bot2:
     <<: *bot
     container_name: tsbot2
-    env_file: [.env.common, bots/bot2.env]
+    env_file:
+      - path: .env.common
+        required: false
+      - path: bots/bot2.env
+        required: false
     volumes: ["./data/bot2:/data"]
 
   autoheal:

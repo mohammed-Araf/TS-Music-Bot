@@ -361,11 +361,11 @@ class App:
                         if len(track_name) > rem:
                             track_name = track_name[:rem - 1] + "…"
                         new_msg = f"▶ {track_name} [{bar}] {time_str} [{duck_tag}]"
-                        away_flag = 1
+                        away_flag = 0
                     elif st and st.get("paused"):
                         vol = st.get("volume", CFG.initial_volume)
                         new_msg = f"⏸️ Paused ({vol}%) [{duck_tag}]"
-                        away_flag = 1
+                        away_flag = 0
                     else:
                         new_msg = ""
                         away_flag = 0

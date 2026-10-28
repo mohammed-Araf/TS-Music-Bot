@@ -17,21 +17,21 @@ class Librespot:
     def __init__(self, base, session):
         self.base, self.s = base, session
 
-    async def _post(self, path, json=None):
+    async def _post(self, path, json=None, timeout=25):
         async with self.s.post(self.base + path, json=json,
-                               timeout=aiohttp.ClientTimeout(total=8)) as r:
+                               timeout=aiohttp.ClientTimeout(total=timeout)) as r:
             if r.status >= 400:
                 raise RuntimeError(f"{path} -> HTTP {r.status}: {await r.text()}")
 
     async def status(self):
-        async with self.s.get(self.base + "/status", timeout=aiohttp.ClientTimeout(total=5)) as r:
+        async with self.s.get(self.base + "/status", timeout=aiohttp.ClientTimeout(total=15)) as r:
             if r.status == 204:
                 return None
             r.raise_for_status()
             return await r.json()
 
     async def auth_code(self):
-        async with self.s.get(self.base + "/auth/code", timeout=aiohttp.ClientTimeout(total=5)) as r:
+        async with self.s.get(self.base + "/auth/code", timeout=aiohttp.ClientTimeout(total=10)) as r:
             if r.status == 204:
                 return None
             r.raise_for_status()

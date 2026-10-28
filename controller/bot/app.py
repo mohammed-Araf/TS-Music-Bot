@@ -141,32 +141,36 @@ class App:
 
     async def spotify_loop(self):
         was_ok = False
+        consecutive_failures = 0
         while True:
             try:
                 st = await self.lr.status()
                 now_ok = bool(st and st.get("username"))
-                if was_ok and not now_ok and self.my_cid:
-                    try:
-                        await self.cq.say(
-                            self.my_cid,
-                            f"⚠️ [b]Spotify Session Ended:[/b] The linked account disconnected or Premium subscription ended.\n"
-                            f"👉 Type [b]{CFG.prefix}login[/b] in chat to reconnect or pair an active Premium account!"
-                        )
-                    except Exception:
-                        pass
-                self.spotify_ok = now_ok
-                was_ok = now_ok
-            except Exception:
-                if was_ok and self.my_cid:
-                    try:
-                        await self.cq.say(
-                            self.my_cid,
-                            f"⚠️ [b]Spotify Connection Lost:[/b] Type [b]{CFG.prefix}login[/b] in chat to pair or reconnect!"
-                        )
-                    except Exception:
-                        pass
-                self.spotify_ok = False
-                was_ok = False
+                if now_ok:
+                    consecutive_failures = 0
+                    self.spotify_ok = True
+                    was_ok = True
+                else:
+                    consecutive_failures += 1
+                    # Explicit 204 No Content returned repeatedly: real logout
+                    if consecutive_failures >= 3:
+                        self.spotify_ok = False
+                        if was_ok and self.my_cid:
+                            try:
+                                await self.cq.say(
+                                    self.my_cid,
+                                    f"⚠️ [b]Spotify Session Ended:[/b] The linked account disconnected or Premium subscription ended.\n"
+                                    f"👉 Type [b]{CFG.prefix}login[/b] in chat to reconnect or pair an active Premium account!"
+                                )
+                            except Exception:
+                                pass
+                            was_ok = False
+            except Exception as e:
+                # Backend is busy loading a track or processing a command: do not panic
+                log.debug("spotify_loop probe exception: %s", e)
+                consecutive_failures += 1
+                if consecutive_failures >= 4:
+                    self.spotify_ok = False
             await asyncio.sleep(15)
 
     async def health(self, request):

@@ -46,10 +46,10 @@ def _supervisor(*args):
 async def play(ctx, arg):
     try:
         st = await ctx.lr.status()
-    except Exception:
-        st = None
-    if not st or not st.get("username"):
-        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        if st is not None and not st.get("username"):
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+    except Exception as e:
+        log.debug("status check before play: %s", e)
 
     if not arg:
         try:
@@ -95,10 +95,10 @@ async def play(ctx, arg):
 async def queue(ctx, arg):
     try:
         st = await ctx.lr.status()
-    except Exception:
-        st = None
-    if not st or not st.get("username"):
-        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        if st is not None and not st.get("username"):
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+    except Exception as e:
+        log.debug("status check before queue: %s", e)
 
     if not arg:
         return f"Usage: {ctx.cfg.prefix}queue <song name or Spotify link>"
@@ -137,14 +137,14 @@ async def queue(ctx, arg):
 async def pause(ctx, arg):
     try:
         st = await ctx.lr.status()
-    except Exception:
-        st = None
-    if not st or not st.get("username"):
-        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-    if st.get("paused"):
-        return "Already paused."
-    if st.get("stopped") and not st.get("track"):
-        return "Nothing is currently playing."
+        if st is not None and not st.get("username"):
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        if st and st.get("paused"):
+            return "Already paused."
+        if st and st.get("stopped") and not st.get("track"):
+            return "Nothing is currently playing."
+    except Exception as e:
+        log.debug("status check before pause: %s", e)
     try:
         await ctx.lr.pause()
         return "⏸️ Playback paused."
@@ -156,7 +156,7 @@ async def pause(ctx, arg):
         except Exception as e2:
             log.exception("pause and playpause failed: %s", e2)
             return (
-                "⚠️ [b]Pause Failed:[/b] Unable to pause playback.\n"
+                "⚠️ [b]Pause Failed:[/b] Player is currently busy loading.\n"
                 f"Type [b]{ctx.cfg.prefix}status[/b] to check player state."
             )
 
@@ -164,12 +164,12 @@ async def pause(ctx, arg):
 async def resume(ctx, arg):
     try:
         st = await ctx.lr.status()
-    except Exception:
-        st = None
-    if not st or not st.get("username"):
-        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-    if not st.get("paused") and not st.get("stopped"):
-        return "Already playing."
+        if st is not None and not st.get("username"):
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        if st and not st.get("paused") and not st.get("stopped"):
+            return "Already playing."
+    except Exception as e:
+        log.debug("status check before resume: %s", e)
     try:
         await ctx.lr.resume()
         return "▶️ Playback resumed."
@@ -179,14 +179,21 @@ async def resume(ctx, arg):
             f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
         )
 
+_last_skip_time = 0.0
+
 @command("skip", "next", "s")
 async def skip(ctx, arg):
+    global _last_skip_time
+    now = time.time()
+    if now - _last_skip_time < 1.5:
+        return "⏳ Skip already in progress..."
+    _last_skip_time = now
     try:
         await ctx.lr.next()
         return "⏭️ Skipped to next track."
     except Exception as e:
         log.warning("skip failed: %s", e)
-        return "⚠️ Unable to skip track. Check if a playlist or queue is active."
+        return "⚠️ Unable to skip right now. The track may still be loading."
 
 @command("prev", "back")
 async def prev(ctx, arg):

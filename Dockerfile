@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libogg0 libvorbis0a libvorbisfile3 libflac12 \
       python3 python3-venv python3-pip \
       fonts-dejavu-core \
+      libevent-2.1-7 libpci3 libxslt1.1 libatomic1 \
       libglib2.0-0 libnss3 libfontconfig1 libdbus-1-3 libegl1 libgl1 \
       libx11-xcb1 libxrender1 libxext6 libxi6 libxtst6 libxrandr2 libxss1 \
       libxcomposite1 libxcursor1 libxdamage1 libxkbcommon-x11-0 \

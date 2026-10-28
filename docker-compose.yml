@@ -8,6 +8,11 @@ x-bot: &bot
   mem_limit: 1g
   stop_grace_period: 15s
   labels: ["autoheal=true"]
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   bot1:
@@ -24,7 +29,9 @@ services:
         required: false
       - path: bots/bot2.env
         required: false
-    volumes: ["./data/bot2:/data"]
+    volumes:
+      - "./data/bot2:/data"
+      - "./controller:/opt/bot/controller"
 
   autoheal:
     image: willfarrell/autoheal:latest

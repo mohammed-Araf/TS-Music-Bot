@@ -4,10 +4,10 @@ from aiohttp import web
 from .config import CFG
 from .clientquery import ClientQuery, QueryError
 from .spotify import Librespot, Search
-from .tsescape import strip_bbcode
+from .tsescape import strip_bbcode, escape
 from .commands import REGISTRY, Ctx
 from .ratelimit import RateLimiter
-from .pulse import set_audio_mute
+from .pulse import set_audio_mute, set_audio_duck
 from .guard import GUARD, ACTION_PLAY, ACTION_PAUSE, ACTION_STOP
 
 log = logging.getLogger("app")
@@ -23,8 +23,94 @@ class App:
         self.limiter = RateLimiter(user_cooldown=CFG.cooldown)
         self.ts_ok = False
         self.spotify_ok = False
+        self.ducking_enabled = CFG.auto_ducking
+        self.channel_clients = set()
+        self.speaking_clients = set()
+        self._eco_idle_start = None
+
+    async def _handle_talk_status(self, f):
+        clid = f.get("clid")
+        status = f.get("status")
+        if not clid or clid == self.my_clid:
+            return
+        if clid not in self.channel_clients:
+            return
+
+        if status == "1":
+            self.speaking_clients.add(clid)
+            if self.ducking_enabled:
+                await set_audio_duck(True, CFG.duck_percent)
+        elif status == "0":
+            self.speaking_clients.discard(clid)
+            if not self.speaking_clients:
+                await set_audio_duck(False)
+
+    async def _handle_client_change(self, name, f):
+        clid = f.get("clid")
+        if not clid or clid == self.my_clid:
+            return
+
+        if name == "notifycliententerview":
+            ctid = f.get("ctid")
+            if ctid == self.my_cid:
+                self.channel_clients.add(clid)
+                self._eco_idle_start = None
+        elif name == "notifyclientleftview":
+            self.channel_clients.discard(clid)
+            self.speaking_clients.discard(clid)
+            if not self.speaking_clients:
+                await set_audio_duck(False)
+            self._check_eco_idle()
+        elif name == "notifyclientmoved":
+            ctid = f.get("ctid")
+            if ctid == self.my_cid:
+                self.channel_clients.add(clid)
+                self._eco_idle_start = None
+            else:
+                self.channel_clients.discard(clid)
+                self.speaking_clients.discard(clid)
+                if not self.speaking_clients:
+                    await set_audio_duck(False)
+                self._check_eco_idle()
+
+    def _check_eco_idle(self):
+        if not CFG.eco_mode:
+            return
+        if not self.channel_clients:
+            if self._eco_idle_start is None:
+                self._eco_idle_start = time.time()
+                log.info("Music channel is empty; started Eco Mode idle timer (5m).")
+        else:
+            self._eco_idle_start = None
+
+    async def _sync_channel_clients(self):
+        if not self.my_cid:
+            return
+        try:
+            clines = await self.cq.cmd(f"channelclientlist cid={self.my_cid}")
+            raw = " ".join(clines)
+            curr = set()
+            for chunk in raw.split("|"):
+                parts = dict(kv.split("=", 1) for kv in chunk.split() if "=" in kv)
+                cid = parts.get("clid")
+                ctype = parts.get("client_type")
+                if cid and cid != self.my_clid and ctype != "1":
+                    curr.add(cid)
+            self.channel_clients = curr
+            self.speaking_clients &= self.channel_clients
+            if not self.speaking_clients:
+                await set_audio_duck(False)
+            self._check_eco_idle()
+        except Exception as e:
+            log.debug("Failed to sync channel clients: %s", e)
 
     async def on_event(self, name, f):
+        if name == "notifytalkstatuschange":
+            await self._handle_talk_status(f)
+            return
+        if name in ("notifyclientmoved", "notifyclientleftview", "notifycliententerview"):
+            await self._handle_client_change(name, f)
+            return
         if name != "notifytextmessage" or f.get("targetmode") != "2":
             return
         if f.get("invokerid") == self.my_clid:
@@ -75,7 +161,7 @@ class App:
                 await self.cq.say(self.my_cid, reason)
             return
         ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid,
-                  server_groups=user_groups, channel_group=ch_group, is_admin=is_admin, cmd=cmd_lower)
+                  server_groups=user_groups, channel_group=ch_group, is_admin=is_admin, cmd=cmd_lower, app=self)
         try:
             reply = await handler(ctx, arg.strip())
         except Exception as e:
@@ -121,7 +207,11 @@ class App:
         self.cq = ClientQuery(CFG.cq_host, CFG.cq_port, CFG.cq_apikey, self.on_event)
         await self.cq.connect()
         sch = (await self.cq.kv("currentschandlerid")).get("schandlerid", "1")
-        await self.cq.cmd(f"clientnotifyregister schandlerid={sch} event=notifytextmessage")
+        for ev in ("notifytextmessage", "notifytalkstatuschange", "notifyclientmoved", "notifyclientleftview", "notifycliententerview"):
+            try:
+                await self.cq.cmd(f"clientnotifyregister schandlerid={sch} event={ev}")
+            except Exception as e:
+                log.warning("Failed to register %s: %s", ev, e)
         while self.cq.connected:
             try:
                 who = await self.cq.kv("whoami")      # fails if not connected to a server
@@ -129,6 +219,7 @@ class App:
                 self.ts_ok = bool(self.my_clid)
                 if self.ts_ok:
                     await self._ensure_channel()
+                    await self._sync_channel_clients()
             except (QueryError, asyncio.TimeoutError):
                 self.ts_ok = False
             await asyncio.sleep(5)
@@ -205,7 +296,74 @@ class App:
 
         # best-effort: set initial volume once go-librespot is up
         asyncio.create_task(self._init_volume())
+        asyncio.create_task(self._ui_ticker_loop())
         await asyncio.gather(self.ts_loop(), self.spotify_loop(), self.spotify_events_loop())
+
+    async def _ui_ticker_loop(self):
+        """
+        Updates the live TeamSpeak away message / description every 5s with progress bar,
+        track metadata, volume, and ducking status. Also enforces Eco Mode auto-pause.
+        """
+        last_away_msg = None
+        while True:
+            try:
+                if self.ts_ok and self.spotify_ok and self.cq and self.cq.connected:
+                    # Enforce Eco Mode
+                    if CFG.eco_mode and self._eco_idle_start and (time.time() - self._eco_idle_start > 300):
+                        try:
+                            st = await self.lr.status()
+                            if st and not st.get("paused"):
+                                log.info("Eco Mode: Channel empty for 5 minutes. Auto-pausing playback.")
+                                await self.lr.pause()
+                                await set_audio_mute(True)
+                                self._eco_idle_start = None
+                        except Exception:
+                            pass
+
+                    # Fetch Spotify state for UI
+                    st = None
+                    try:
+                        st = await self.lr.status()
+                    except Exception:
+                        pass
+
+                    duck_tag = "Duck:ON" if self.ducking_enabled else "Duck:OFF"
+                    new_msg = None
+                    if st and not st.get("paused") and st.get("item"):
+                        item = st.get("item", {})
+                        title = item.get("name", "Unknown Track")
+                        artists = ", ".join(a.get("name") for a in item.get("artists", []))
+                        dur_ms = item.get("duration_ms", 0)
+                        pos_ms = st.get("progress_ms", 0)
+                        pos_s, dur_s = pos_ms // 1000, dur_ms // 1000
+                        if dur_s > 0:
+                            pct = min(max(pos_s / dur_s, 0.0), 1.0)
+                            filled = int(round(pct * 8))
+                            bar = "█" * filled + "░" * (8 - filled)
+                            time_str = f"{pos_s // 60}:{pos_s % 60:02d}/{dur_s // 60}:{dur_s % 60:02d}"
+                        else:
+                            bar = "░" * 8
+                            time_str = "0:00"
+
+                        base_len = len(f"▶  [{bar}] {time_str} [{duck_tag}]")
+                        rem = 80 - base_len - 1
+                        track = f"{title} - {artists}" if artists else title
+                        if len(track) > rem:
+                            track = track[:rem - 1] + "…"
+                        new_msg = f"▶ {track} [{bar}] {time_str} [{duck_tag}]"
+                    elif st and st.get("paused"):
+                        vol = st.get("volume", CFG.initial_volume)
+                        new_msg = f"⏸️ Paused ({vol}%) [{duck_tag}]"
+
+                    if new_msg and new_msg != last_away_msg:
+                        try:
+                            await self.cq.cmd(f"clientupdate client_away=0 client_away_message={escape(new_msg)}")
+                            last_away_msg = new_msg
+                        except Exception:
+                            pass
+            except Exception as e:
+                log.debug("UI ticker error: %s", e)
+            await asyncio.sleep(5)
 
     async def spotify_events_loop(self):
         """

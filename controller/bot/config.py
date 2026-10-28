@@ -32,6 +32,10 @@ class Config:
     max_volume: int = _i("MAX_VOLUME", 80)
     initial_volume: int = _i("INITIAL_VOLUME", 40)
 
+    auto_ducking: bool = os.environ.get("AUTO_DUCKING", "true").lower() in ("true", "1", "yes")
+    duck_percent: int = _i("DUCK_PERCENT", 30)
+    eco_mode: bool = os.environ.get("ECO_MODE", "true").lower() in ("true", "1", "yes")
+
     health_port: int = 8080
 
 CFG = Config()

@@ -30,13 +30,14 @@ def command(name, *aliases, admin=False):
     return deco
 
 class Ctx:
-    def __init__(self, cfg, cq, lr, search, uid, nick, cid, server_groups=None, channel_group=None, is_admin=False, cmd=""):
+    def __init__(self, cfg, cq, lr, search, uid, nick, cid, server_groups=None, channel_group=None, is_admin=False, cmd="", app=None):
         self.cfg, self.cq, self.lr, self.search = cfg, cq, lr, search
         self.uid, self.nick, self.cid = uid, nick, cid
         self.server_groups = server_groups or set()
         self.channel_group = channel_group or ""
         self.is_admin = is_admin
         self.cmd = cmd
+        self.app = app
 
 def _supervisor(*args):
     return subprocess.run(
@@ -599,19 +600,145 @@ async def audio(ctx, arg):
     r = _supervisor("restart", "go-librespot")
     return "Audio backend restarted." if r.returncode == 0 else f"Failed: {r.stdout.strip()}"
 
+def _get_sys_resources():
+    mem = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split(":")
+                if len(parts) == 2:
+                    mem[parts[0].strip()] = int(parts[1].strip().split()[0])
+        tot = mem.get("MemTotal", 0) // 1024
+        avail = mem.get("MemAvailable", 0) // 1024
+        used = tot - avail
+        pct = round((used / tot) * 100, 1) if tot else 0
+        sw_tot = mem.get("SwapTotal", 0) // 1024
+        sw_free = mem.get("SwapFree", 0) // 1024
+        sw_used = sw_tot - sw_free
+        sw_pct = round((sw_used / sw_tot) * 100, 1) if sw_tot else 0
+    except Exception:
+        tot, used, pct = 0, 0, 0
+        sw_tot, sw_used, sw_pct = 0, 0, 0
+
+    cpu = "N/A"
+    try:
+        with open("/proc/loadavg") as f:
+            cpu = f.read().split()[0]
+    except Exception:
+        pass
+
+    uptime = "N/A"
+    try:
+        with open("/proc/uptime") as f:
+            s = int(float(f.read().split()[0]))
+            d, rem = divmod(s, 86400)
+            h, rem = divmod(rem, 3600)
+            m, _ = divmod(rem, 60)
+            uptime = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
+    except Exception:
+        pass
+
+    return {
+        "ram_used": used, "ram_total": tot, "ram_pct": pct,
+        "swap_used": sw_used, "swap_total": sw_tot, "swap_pct": sw_pct,
+        "cpu": cpu, "uptime": uptime
+    }
+
 @command("status", admin=True)
 async def status(ctx, arg):
+    sys_res = _get_sys_resources()
+
     try:
         st = await ctx.lr.status()
     except Exception:
         st = None
+
+    # TeamSpeak channel & client info
+    ch_name = "Unknown"
+    humans = 0
+    if ctx.cid:
+        try:
+            cv = await ctx.cq.kv(f"channelvariable cid={ctx.cid} channel_name")
+            ch_name = cv.get("channel_name", "Unknown").replace("\\s", " ")
+        except Exception:
+            pass
+        try:
+            clines = await ctx.cq.cmd(f"channelclientlist cid={ctx.cid}")
+            raw = " ".join(clines)
+            for chunk in raw.split("|"):
+                parts = dict(kv.split("=", 1) for kv in chunk.split() if "=" in kv)
+                clid = parts.get("clid")
+                ctype = parts.get("client_type")
+                if clid and clid != ctx.app.my_clid if ctx.app else True and ctype != "1":
+                    humans += 1
+        except Exception:
+            pass
+
+    # Ducking state
+    duck_on = ctx.app.ducking_enabled if ctx.app else False
+    duck_tag = "[color=#28a745][b]ON[/b][/color] (Dips 30% on speech)" if duck_on else "[color=#888888][b]OFF[/b][/color]"
+
+    # Spotify info
     if not st or not st.get("username"):
-        return f"Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] to pair."
-    return f"Spotify connected as {st.get('username')}; paused={st.get('paused')}; volume={st.get('volume')}"
+        sp_info = f"• Status: [color=#d9534f]Disconnected[/color] (Type [b]{ctx.cfg.prefix}login[/b] to pair)"
+    else:
+        user = st.get("username", "Unknown")
+        dev = st.get("device_name", "Spotify Device")
+        paused = st.get("paused", True)
+        state_str = "[color=#f0ad4e]Paused[/color]" if paused else "[color=#28a745]Playing[/color]"
+        vol = st.get("volume", ctx.cfg.initial_volume)
+        item = st.get("item")
+        track_info = ""
+        if item and not paused:
+            track_name = item.get("name", "Unknown")
+            artist_name = ", ".join(a.get("name") for a in item.get("artists", []))
+            track_info = f"\n• Track: [b]{track_name}[/b] by {artist_name}"
+        sp_info = (f"• Account: [b]{user}[/b] | Device: [b]{dev}[/b]\n"
+                   f"• State: {state_str} | Volume: [b]{vol}%[/b]{track_info}")
+
+    return (
+        f"📊 [b]Bot & System Health Status[/b]\n"
+        f"──────────────────────────────────────\n"
+        f"🖥️ [b]System Resources:[/b]\n"
+        f"• RAM: [b]{sys_res['ram_used']} MB[/b] / {sys_res['ram_total']} MB ({sys_res['ram_pct']}%)\n"
+        f"• Swap: [b]{sys_res['swap_used']} MB[/b] / {sys_res['swap_total']} MB ({sys_res['swap_pct']}%)\n"
+        f"• CPU Load: [b]{sys_res['cpu']}[/b] | Uptime: [b]{sys_res['uptime']}[/b]\n\n"
+        f"🎙️ [b]TeamSpeak 3:[/b]\n"
+        f"• Channel: [b]{ch_name}[/b] (Users: [b]{humans}[/b])\n"
+        f"• Voice Ducking: {duck_tag}\n\n"
+        f"🎵 [b]Spotify Connect:[/b]\n"
+        f"{sp_info}\n"
+        f"──────────────────────────────────────"
+    )
+
+@command("duck", "ducking")
+async def duck(ctx, arg):
+    app = ctx.app
+    if not app:
+        return "Audio ducking controller unavailable."
+
+    arg = arg.strip().lower()
+    from .pulse import set_audio_duck
+
+    if arg in ("on", "1", "enable", "true"):
+        app.ducking_enabled = True
+    elif arg in ("off", "0", "disable", "false"):
+        app.ducking_enabled = False
+        await set_audio_duck(False)
+    elif not arg:
+        app.ducking_enabled = not app.ducking_enabled
+        if not app.ducking_enabled:
+            await set_audio_duck(False)
+    else:
+        return f"Usage: [b]{ctx.cfg.prefix}duck [on|off][/b]"
+
+    state = "[color=#28a745][b]ON[/b][/color]" if app.ducking_enabled else "[color=#888888][b]OFF[/b][/color]"
+    detail = "Music volume will dip by 30% when someone speaks." if app.ducking_enabled else "Music volume will stay constant."
+    return f"🎙️ Voice Ducking is now {state}. {detail}"
 
 @command("help", "h")
 async def help_(ctx, arg):
     p = ctx.cfg.prefix
     return (f"{p}play <name|link>, {p}queue <name|link>, {p}pause, {p}resume, {p}skip, "
-            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}login, {p}spotifykeys, {p}myroles | "
+            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}duck, {p}login, {p}spotifykeys, {p}myroles | "
             f"admin: {p}logout, {p}restart, {p}reconnect, {p}audio, {p}status")

@@ -44,3 +44,38 @@ async def set_audio_mute(mute: bool) -> bool:
         except Exception as e:
             log.warning("Failed to set PulseAudio mute state (%s): %s", mute, e)
             return False
+
+_current_duck_state = None
+_duck_lock = asyncio.Lock()
+
+async def set_audio_duck(duck: bool, duck_pct: int = 30) -> bool:
+    """
+    Hardware-level voice ducking via PulseAudio sink volume.
+    When duck=True, reduces sink volume to duck_pct (default 30%).
+    When duck=False, restores sink volume to 100%.
+    """
+    global _current_duck_state
+
+    if _current_duck_state is duck:
+        return True
+
+    async with _duck_lock:
+        if _current_duck_state is duck:
+            return True
+
+        val = f"{duck_pct}%" if duck else "100%"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pactl", "set-sink-volume", "music", val,
+                env=PULSE_ENV,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await proc.wait()
+            _current_duck_state = duck
+            log.debug("PulseAudio ducking set to %s (val=%s)", duck, val)
+            return True
+        except Exception as e:
+            log.warning("Failed to set PulseAudio ducking state (%s): %s", duck, e)
+            return False
+

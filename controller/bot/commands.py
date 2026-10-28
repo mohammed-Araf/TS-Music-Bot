@@ -58,6 +58,12 @@ async def play(ctx, arg):
         return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
 
     if not arg:
+        if _is_bgm_active(ctx):
+            return (
+                "☕ [b]Background Music is already playing.[/b]\n"
+                f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own music!"
+            )
+
         allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
         if not allowed:
             return reason
@@ -125,12 +131,12 @@ async def play(ctx, arg):
             ctx.app._ready_for_ambient_autoplay = False
             ctx.app.is_ambient_autoplay = False
 
-        if was_bgm:
-            try:
-                await ctx.lr.volume(ctx.cfg.initial_volume)
-                GUARD.mark_volume(ctx.cfg.initial_volume)
-            except Exception:
-                pass
+        target_vol = getattr(ctx.app, "user_volume", ctx.cfg.initial_volume) if ctx.app else ctx.cfg.initial_volume
+        try:
+            await ctx.lr.volume(target_vol)
+            GUARD.mark_volume(target_vol)
+        except Exception:
+            pass
 
         GUARD.mark_state(ACTION_PLAY)
         return f"Playing: {label}"
@@ -194,8 +200,19 @@ async def queue(ctx, arg):
                 f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
             )
 
+def _is_bgm_active(ctx) -> bool:
+    if not ctx.app:
+        return False
+    return getattr(ctx.app, "is_ambient_autoplay", False)
+
 @command("pause")
 async def pause(ctx, arg):
+    if _is_bgm_active(ctx):
+        return (
+            "☕ [b]Background Music is the bot's default idle state and cannot be paused.[/b]\n"
+            f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own music!"
+        )
+
     allowed, reason = GUARD.can_toggle_state(ACTION_PAUSE, is_admin=ctx.is_admin)
     if not allowed:
         return reason
@@ -226,6 +243,12 @@ async def pause(ctx, arg):
 
 @command("stop")
 async def stop(ctx, arg):
+    if _is_bgm_active(ctx):
+        return (
+            "☕ [b]Background Music is the bot's default idle state and cannot be stopped.[/b]\n"
+            f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own music!"
+        )
+
     allowed, reason = GUARD.can_toggle_state(ACTION_STOP, is_admin=ctx.is_admin)
     if not allowed:
         return reason
@@ -252,6 +275,12 @@ async def stop(ctx, arg):
 
 @command("resume", "r")
 async def resume(ctx, arg):
+    if _is_bgm_active(ctx):
+        return (
+            "☕ [b]Background Music is already active.[/b]\n"
+            f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own music!"
+        )
+
     allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
     if not allowed:
         return reason
@@ -283,6 +312,12 @@ async def resume(ctx, arg):
 
 @command("skip", "next", "s")
 async def skip(ctx, arg):
+    if _is_bgm_active(ctx):
+        return (
+            "☕ [b]Track controls are disabled for Background Music.[/b]\n"
+            f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own song!"
+        )
+
     allowed, reason = GUARD.can_skip(is_admin=ctx.is_admin)
     if not allowed:
         return reason
@@ -309,6 +344,12 @@ async def skip(ctx, arg):
 
 @command("prev", "back")
 async def prev(ctx, arg):
+    if _is_bgm_active(ctx):
+        return (
+            "☕ [b]Track controls are disabled for Background Music.[/b]\n"
+            f"Type [b]{ctx.cfg.prefix}play <song>[/b] anytime to play your own song!"
+        )
+
     allowed, reason = GUARD.can_skip(is_admin=ctx.is_admin)
     if not allowed:
         return reason
@@ -335,56 +376,50 @@ async def prev(ctx, arg):
 
 @command("vol", "volume", "v")
 async def vol(ctx, arg):
-    is_bgm = getattr(ctx.app, "is_ambient_autoplay", False)
-    if not is_bgm and ctx.app:
-        try:
-            st = await ctx.lr.status()
-            if st and st.get("context_uri") == ctx.cfg.chill_autoplay_uri:
-                is_bgm = True
-                ctx.app.is_ambient_autoplay = True
-        except Exception:
-            pass
-
-    max_v = ctx.cfg.chill_volume if is_bgm else ctx.cfg.max_volume
+    app = ctx.app
+    user_vol = getattr(app, "user_volume", ctx.cfg.initial_volume) if app else ctx.cfg.initial_volume
 
     if not arg:
-        if GUARD.last_volume is not None:
-            bgm_note = f" (Locked to max {ctx.cfg.chill_volume}% for Background Music)" if is_bgm else ""
-            return f"Current volume: {GUARD.last_volume}%{bgm_note}"
+        if _is_bgm_active(ctx):
+            return f"Current volume: [b]{ctx.cfg.chill_volume}%[/b] (Background Music) | Active music volume set to: [b]{user_vol}%[/b]"
+        return f"Current volume: [b]{user_vol}%[/b]"
+
+    arg_clean = arg.strip()
+    if arg_clean.startswith(("+", "-")):
         try:
-            st = await ctx.lr.status()
-            if st and "volume" in st:
-                GUARD.last_volume = st["volume"]
-                bgm_note = f" (Locked to max {ctx.cfg.chill_volume}% for Background Music)" if is_bgm else ""
-                return f"Current volume: {st['volume']}%{bgm_note}"
-        except Exception:
-            pass
-        return f"Usage: {ctx.cfg.prefix}vol <0-{max_v}>"
+            delta = int(arg_clean)
+            target_vol = user_vol + delta
+        except ValueError:
+            return f"Usage: [b]{ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>[/b] (e.g. [b]{ctx.cfg.prefix}vol 60[/b] or [b]{ctx.cfg.prefix}vol +10[/b])"
+    else:
+        try:
+            target_vol = int(arg_clean)
+        except ValueError:
+            return f"Usage: [b]{ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>[/b] (e.g. [b]{ctx.cfg.prefix}vol 60[/b] or [b]{ctx.cfg.prefix}vol +10[/b])"
 
-    try:
-        target_vol = int(arg)
-    except ValueError:
-        return f"Usage: {ctx.cfg.prefix}vol <0-{max_v}>"
+    target_vol = max(0, min(target_vol, ctx.cfg.max_volume))
 
-    if is_bgm and target_vol > ctx.cfg.chill_volume:
-        return (
-            f"🔒 [b]Background Chill Music is locked to a maximum of {ctx.cfg.chill_volume}% volume.[/b]\n"
-            f"Play your own song with [b]{ctx.cfg.prefix}play <song>[/b] to unlock normal volume control (up to {ctx.cfg.max_volume}%)!"
-        )
-
-    target_vol = max(0, min(target_vol, max_v))
-
-    if GUARD.last_volume is not None and target_vol == GUARD.last_volume:
+    if user_vol == target_vol and not _is_bgm_active(ctx):
         return f"Volume is already {target_vol}%."
 
     allowed, reason = GUARD.can_adjust_volume(is_admin=ctx.is_admin)
     if not allowed:
         return reason
 
+    if app:
+        app.user_volume = target_vol
+    GUARD.mark_volume(target_vol)
+
+    if _is_bgm_active(ctx):
+        return (
+            f"🔊 Music playback volume set to [b]{target_vol}%[/b].\n"
+            f"• This will take effect when a song starts playing (e.g. [b]{ctx.cfg.prefix}play <song>[/b]).\n"
+            f"• Background music remains locked at [b]{ctx.cfg.chill_volume}%[/b]."
+        )
+
     async with GUARD.lock:
         try:
             await asyncio.wait_for(ctx.lr.volume(target_vol), timeout=5.0)
-            GUARD.mark_volume(target_vol)
             return f"Volume set to: {target_vol}%"
         except asyncio.TimeoutError:
             return "⏳ Volume update timed out. Please try again."
@@ -851,6 +886,8 @@ async def duck(ctx, arg):
         if app.ducking_enabled
         else "Music volume will stay constant."
     )
+    if _is_bgm_active(ctx):
+        detail += "\n(Note: Background music is unaffected by ducking; this will take effect when songs are played)."
     return f"🎙️ Voice Ducking is now {state}. {detail}"
 
 @command("chill", "bgm", "ambient")

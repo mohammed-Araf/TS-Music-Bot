@@ -34,6 +34,7 @@ class App:
         self._empty_channel_time: float = None
         self._ready_for_ambient_autoplay: bool = False
         self.is_ambient_autoplay: bool = False
+        self.user_volume: int = CFG.initial_volume
 
     def _cancel_unduck_timer(self):
         """Cancels any pending hysteresis hold timer."""
@@ -103,6 +104,7 @@ class App:
             self._cancel_unduck_timer()
             await set_audio_duck(False)
             self._is_ducked = False
+            was_bgm = self.is_ambient_autoplay
             self.is_ambient_autoplay = False
             st = None
             try:
@@ -111,17 +113,19 @@ class App:
                 pass
 
             was_playing = bool(st and not st.get("paused") and not st.get("stopped") and st.get("track"))
-            self._paused_by_empty_channel = was_playing
+
+            # Only consider it a savable/resumable user track if it was NOT background music
+            self._paused_by_empty_channel = was_playing and not was_bgm
 
             if was_playing:
-                log.info("Channel emptied. Instantly pausing audio and setting away status.")
+                log.info("Channel emptied. Instantly pausing audio and setting away status (was_bgm=%s).", was_bgm)
                 try:
                     await self.lr.pause()
                 except Exception:
                     pass
                 await set_audio_mute(True)
 
-            away_msg = "⏸️ Paused (Empty Channel)" if was_playing else "⏸️ Idle (Empty Channel)"
+            away_msg = "⏸️ Paused (Empty Channel)" if self._paused_by_empty_channel else "⏸️ Idle (Empty Channel)"
             try:
                 await self.cq.cmd(f"clientupdate client_away=1 client_away_message={escape(away_msg)}")
             except Exception:
@@ -150,6 +154,8 @@ class App:
             log.info("User returned within %.1fs. Auto-resuming saved playback.", empty_duration)
             await set_audio_mute(False)
             try:
+                await self.lr.volume(self.user_volume)
+                GUARD.mark_volume(self.user_volume)
                 await self.lr.resume()
                 if self.my_cid:
                     await self.cq.say(
@@ -160,20 +166,16 @@ class App:
                 log.warning("Failed to auto-resume: %s", e)
             return
 
-        # Case 2: 5 minutes have passed or bot was idle -> Auto-play chill background beats on low volume!
-        should_autoplay_chill = (
-            (was_empty and (self._ready_for_ambient_autoplay or empty_duration > CFG.eco_resume_window))
-            or self._ready_for_ambient_autoplay
-        )
+        # Case 2: No saved user track (or expired) -> Default state: play background chill music!
         self._paused_by_empty_channel = False
         self._ready_for_ambient_autoplay = False
 
-        if should_autoplay_chill and self.spotify_ok:
+        if self.spotify_ok:
             try:
                 st = await self.lr.status()
-                # Only autoplay chill beats if nothing is currently playing
+                # If nothing is actively playing, start background chill music
                 if not st or st.get("paused") or st.get("stopped") or not st.get("track"):
-                    log.info("Channel joined after timeout. Starting chill background music at %d%% vol.", CFG.chill_volume)
+                    log.info("Channel joined with no active track. Starting default chill background music at %d%% vol.", CFG.chill_volume)
                     self.is_ambient_autoplay = True
                     await self.lr.volume(CFG.chill_volume)
                     GUARD.mark_volume(CFG.chill_volume)
@@ -267,8 +269,9 @@ class App:
                     await set_audio_duck(False)
                     self._is_ducked = False
 
-            if len(self.channel_clients) == 0 and not prev_empty:
-                asyncio.create_task(self._handle_channel_empty())
+            if len(self.channel_clients) == 0:
+                if not prev_empty or self._empty_channel_time is None:
+                    asyncio.create_task(self._handle_channel_empty())
             elif len(self.channel_clients) > 0 and prev_empty:
                 asyncio.create_task(self._handle_channel_active())
         except Exception as e:
@@ -516,6 +519,27 @@ class App:
                             except Exception:
                                 pass
 
+                    # Auto-return to default ambient BGM state if channel has active users and user queue finished
+                    if (
+                        CFG.eco_mode
+                        and bool(self.channel_clients)
+                        and self.spotify_ok
+                        and not self.is_ambient_autoplay
+                        and not self._paused_by_empty_channel
+                        and GUARD.last_action_type != ACTION_PAUSE
+                    ):
+                        if not st or st.get("stopped") or not st.get("track"):
+                            log.info("Playback ended with users in channel. Returning to default ambient chill music.")
+                            self.is_ambient_autoplay = True
+                            try:
+                                await self.lr.volume(CFG.chill_volume)
+                                GUARD.mark_volume(CFG.chill_volume)
+                                await set_audio_mute(False)
+                                await self.lr.play(CFG.chill_autoplay_uri)
+                                GUARD.mark_state(ACTION_PLAY)
+                            except Exception as e:
+                                log.debug("Failed to return to default BGM: %s", e)
+
                     if self.is_ambient_autoplay:
                         duck_tag = "BGM"
                     else:
@@ -601,6 +625,7 @@ class App:
                                 elif etype == "volume":
                                     vol = data.get("value")
                                     if vol is not None:
+                                        self.user_volume = int(vol)
                                         if self.is_ambient_autoplay and int(vol) > CFG.chill_volume:
                                             log.info("Clamping external volume to %d%% during BGM", CFG.chill_volume)
                                             asyncio.create_task(self.lr.volume(CFG.chill_volume))
@@ -616,9 +641,11 @@ class App:
             await asyncio.sleep(5)
 
     async def _init_volume(self):
+        self.user_volume = CFG.initial_volume
         for _ in range(30):
             try:
-                await self.lr.volume(CFG.initial_volume)
+                vol = CFG.chill_volume if self.is_ambient_autoplay else self.user_volume
+                await self.lr.volume(vol)
                 return
             except Exception:
                 await asyncio.sleep(2)

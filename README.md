@@ -199,13 +199,15 @@ All commands use the prefix defined in `.env.common` (default `!`):
 
 | Command | Permission | Description |
 |---|---|---|
-| `!play <query \| link>` | Everyone / Allowed Role | Search & play, or stream direct Spotify track/album/playlist URL. Resumes if empty. |
-| `!queue <query \| link>` | Everyone / Allowed Role | Add track or Spotify URL to playback queue. |
-| `!pause` | Everyone / Allowed Role | Pause playback. |
+| `!play <query \| link>` (or `!p`) | Everyone / Allowed Role | Search & play, or stream direct Spotify track/album/playlist URL. Resumes if empty. |
+| `!queue <query \| link>` (or `!q`) | Everyone / Allowed Role | Add track or Spotify URL to playback queue. |
+| `!pause` | Everyone / Allowed Role | Pause user playback. |
 | `!resume` (or `!r`) | Everyone / Allowed Role | Resume playback. |
-| `!skip` (or `!next`, `!s`) | Everyone / Allowed Role | Skip to next track. |
+| `!stop` | Everyone / Allowed Role | Stop user playback and return immediately to default ambient background music. |
+| `!skip` (or `!next`, `!s`) | Everyone / Allowed Role | Skip to next track in queue. |
 | `!prev` (or `!back`) | Everyone / Allowed Role | Return to previous track. |
-| `!vol <0-80>` (or `!v`) | Everyone / Allowed Role | Adjust volume (clamped to `MAX_VOLUME`). |
+| `!vol <0-80>` (or `!v`) | Everyone / Allowed Role | Adjust volume. When BGM is active, pre-registers volume for when songs play. |
+| `!duck` | Everyone / Allowed Role | Toggle conversational voice ducking on/off. |
 | `!np` | Everyone / Allowed Role | Show currently playing song title and artist. |
 | `!login` (or `!pair`) | Allowed Role / Admin | Pair a Spotify Premium account directly via `spotify.com/pair` link. |
 | `!spotifykeys` | Allowed Role / Admin | Step-by-step wizard to connect custom free Spotify search keys. |
@@ -215,7 +217,18 @@ All commands use the prefix defined in `.env.common` (default `!`):
 | `!restart` | Admin | Restart the container process. |
 | `!reconnect` | Admin | Reconnect TeamSpeak 3 client to the channel. |
 | `!audio` | Admin | Restart `go-librespot` audio engine. |
-| `!status` | Admin | Check Spotify connection status, active user, and health. |
+| `!status` | Admin | View system metrics (Container RAM, Host RAM, CPU) and playback health. |
+
+---
+
+### ✨ Smart Automation & Audio Features
+
+- **Ambient Background Chill Music (BGM):** When users enter an idle channel or when a requested song/queue ends, the bot automatically plays relaxing chill lo-fi beats at a comfortable, conversation-friendly volume locked at 20%.
+- **Separated Volume Controls:** BGM volume is locked at 20% to keep voice chat clear. Setting volume (e.g. `!v 60`) during BGM pre-registers your preferred volume level so it instantly activates the moment anyone starts a song!
+- **Conversational Voice Ducking:** When users talk, the bot smoothly reduces music volume to 30%. A conversational hysteresis hold window (1.8s) ensures natural pauses between speakers don't cause annoying audio volume bounces. Ducking automatically disables during BGM.
+- **Eco-Mode Auto-Pause:** When everyone leaves the channel, the bot immediately pauses audio and enters away status. If someone returns within 5 minutes, audio seamlessly resumes right where it left off; after 5 minutes, it resets to ambient chill beats upon the next arrival.
+- **Live TeamSpeak Ticker:** The bot's away status updates every 5s with a live progress bar, current time, volume indicator (`[Vol:X%]`), and mode indicator (`[Duck:ON]` or `[BGM]`), safely optimized for TeamSpeak's character limits.
+- **Dual RAM Reporting:** `!status` accurately displays both your isolated Docker container memory allocation and the host VPS memory.
 
 ---
 

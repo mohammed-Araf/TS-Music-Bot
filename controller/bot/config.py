@@ -35,6 +35,7 @@ class Config:
     auto_ducking: bool = os.environ.get("AUTO_DUCKING", "true").lower() in ("true", "1", "yes")
     duck_percent: int = _i("DUCK_PERCENT", 30)
     eco_mode: bool = os.environ.get("ECO_MODE", "true").lower() in ("true", "1", "yes")
+    ticker_interval: float = _f("TICKER_INTERVAL", 2.0)
 
     health_port: int = 8080
 

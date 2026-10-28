@@ -384,7 +384,7 @@ class App:
                             log.debug("Failed to update away message: %s", e)
             except Exception as e:
                 log.debug("UI ticker error: %s", e)
-            await asyncio.sleep(5)
+            await asyncio.sleep(CFG.ticker_interval)
 
     async def spotify_events_loop(self):
         """

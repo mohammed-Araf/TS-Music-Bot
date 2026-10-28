@@ -1,0 +1,11 @@
+# Minimal PulseAudio config: no hardware, two null sinks, unix socket.
+load-module module-native-protocol-unix auth-anonymous=1 socket=/tmp/pulse.sock
+
+# Where Spotify plays. Its .monitor is the "microphone" the TS client captures.
+load-module module-null-sink sink_name=music sink_properties=device.description=Music
+
+# Where the TS client "plays" what it hears (discarded).
+load-module module-null-sink sink_name=void sink_properties=device.description=Void
+
+set-default-sink void
+set-default-source music.monitor

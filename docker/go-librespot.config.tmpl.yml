@@ -1,0 +1,22 @@
+# Option names: verified against go-librespot v0.10.x schema
+log_level: info
+device_name: "${SPOTIFY_DEVICE_NAME}"
+device_type: speaker
+
+audio_backend: pulseaudio
+audio_device: music          # PulseAudio sink name
+
+bitrate: 320                 # Premium
+volume_steps: 100
+initial_volume: ${INITIAL_VOLUME}
+normalisation_enabled: true
+
+credentials:
+  type: interactive          # OAuth login once; credentials then persist in /data/librespot
+  interactive:
+    callback_port: 8888
+
+server:                      # local control API used by the controller
+  enabled: true
+  address: 127.0.0.1
+  port: 3678

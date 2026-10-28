@@ -12,9 +12,9 @@ TS_PORT="9987"                            # TeamSpeak Server Port (default: 9987
 TS_CHANNEL="Music"                        # Target Music Channel Name
 TS_CHANNEL_PASSWORD=""                    # Channel Password (leave empty if none)
 TS_SERVER_PASSWORD=""                     # Server Password (leave empty if none)
-TS_NICK="☠ ʀᴀɢᴇ ʙᴏᴛ ☠"                       # Bot Nickname in TeamSpeak
+TS_NICK="MusicBot"                         # Bot Nickname in TeamSpeak
 ADMIN_SERVER_GROUPS="6"                   # Server Group ID for Bot Admins (6 = Server Admin)
-ALLOWED_SERVER_GROUPS="50"                # Server Group ID allowed to play music (blank for everyone)
+ALLOWED_SERVER_GROUPS=""                  # Server Group ID allowed to play music (blank for everyone)
 
 # ==============================================================================
 # DO NOT EDIT BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING
@@ -127,9 +127,9 @@ if [ -f bots/bot1.env ]; then
     FILE_ADM=$(grep '^ADMIN_SERVER_GROUPS=' bots/bot1.env | cut -d '=' -f2- || true)
     FILE_ALL=$(grep '^ALLOWED_SERVER_GROUPS=' bots/bot1.env | cut -d '=' -f2- || true)
 
-    [ -n "$FILE_NICK" ] && [ "$TS_NICK" = "MusicBot1" ] && TS_NICK="$FILE_NICK"
+    [ -n "$FILE_NICK" ] && [ "$TS_NICK" = "MusicBot" ] && TS_NICK="$FILE_NICK"
     [ -n "$FILE_ADM" ] && [ "$ADMIN_SERVER_GROUPS" = "6" ] && ADMIN_SERVER_GROUPS="$FILE_ADM"
-    [ -n "$FILE_ALL" ] && [ "$ALLOWED_SERVER_GROUPS" = "50" ] && ALLOWED_SERVER_GROUPS="$FILE_ALL"
+    [ -n "$FILE_ALL" ] && [ "$ALLOWED_SERVER_GROUPS" = "" ] && ALLOWED_SERVER_GROUPS="$FILE_ALL"
 fi
 
 # 4. Interactive Configuration Prompts (if running in terminal and not auto-confirmed)

@@ -1,5 +1,5 @@
 x-bot: &bot
-  image: ghcr.io/mohammed-araf/ts-music-bot:latest
+  image: ts-spotify-bot:latest
   build: .
   platform: linux/amd64
   restart: unless-stopped

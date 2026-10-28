@@ -5,7 +5,6 @@
 **A high-performance, containerized TeamSpeak 3 Spotify Connect music bot.**
 
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)](https://www.docker.com/)
-[![Pre--built Image](https://img.shields.io/badge/Container-GitHub%20Packages-2088FF?style=flat-square&logo=github)](https://github.com/mohammed-Araf/TS-Music-Bot/pkgs/container/ts-music-bot)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python)](https://python.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
@@ -58,7 +57,7 @@ Then run `bash install.sh -y` to auto-deploy with your saved settings!
 #### 🤖 What `install.sh` does automatically:
 1. **Checks Docker:** If Docker is already installed, it skips installation. If missing, it installs the official Docker Engine and Compose plugin automatically.
 2. **Checks / Overwrites Configuration:** Prompts you for your server details (or uses the values from the top of the script) and generates `.env.common` and `bots/bot1.env`.
-3. **Downloads Missing Dependencies:** Automatically prepares data directories and pulls the pre-built container.
+3. **Downloads Missing Dependencies:** Automatically prepares data directories and builds the container image locally.
 4. **Starts the Bot:** Launches the container in the background (`docker compose up -d bot1`).
 
 ---
@@ -160,7 +159,7 @@ Open your terminal (Command Prompt, PowerShell, or macOS Terminal) inside the bo
 ```bash
 docker compose up -d bot1
 ```
-Docker will automatically pull the pre-packaged build and start the bot. Within seconds, you will see the bot join your TeamSpeak channel!
+Docker will automatically build the container image and start the bot. Within seconds, you will see the bot join your TeamSpeak channel!
 
 ### Step 5: Connect Spotify and Play!
 1. In your TeamSpeak channel chat, type:

@@ -56,14 +56,16 @@ async def set_audio_duck(duck: bool, duck_pct: int = 30) -> bool:
     """
     global _current_duck_state
 
-    if _current_duck_state is duck:
+    desired_pct = max(5, min(duck_pct, 95)) if duck else 100
+    state_key = (duck, desired_pct)
+    if _current_duck_state == state_key:
         return True
 
     async with _duck_lock:
-        if _current_duck_state is duck:
+        if _current_duck_state == state_key:
             return True
 
-        val = f"{duck_pct}%" if duck else "100%"
+        val = f"{desired_pct}%"
         try:
             proc = await asyncio.create_subprocess_exec(
                 "pactl", "set-sink-volume", "music", val,
@@ -72,7 +74,7 @@ async def set_audio_duck(duck: bool, duck_pct: int = 30) -> bool:
                 stderr=asyncio.subprocess.DEVNULL
             )
             await proc.wait()
-            _current_duck_state = duck
+            _current_duck_state = state_key
             log.debug("PulseAudio ducking set to %s (val=%s)", duck, val)
             return True
         except Exception as e:

@@ -24,6 +24,7 @@ class App:
         self.ts_ok = False
         self.spotify_ok = False
         self.ducking_enabled = CFG.auto_ducking
+        self.duck_percent = CFG.duck_percent
         self.channel_clients = set()
         self.speaking_clients = set()
         self._eco_idle_start = None
@@ -39,7 +40,7 @@ class App:
         if status == "1":
             self.speaking_clients.add(clid)
             if self.ducking_enabled:
-                await set_audio_duck(True, CFG.duck_percent)
+                await set_audio_duck(True, self.duck_percent)
         elif status == "0":
             self.speaking_clients.discard(clid)
             if not self.speaking_clients:

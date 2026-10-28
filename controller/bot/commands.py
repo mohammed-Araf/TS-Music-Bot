@@ -702,7 +702,8 @@ async def status(ctx, arg):
 
     # Ducking state
     duck_on = ctx.app.ducking_enabled if ctx.app else False
-    duck_tag = "[color=#28a745][b]ON[/b][/color] (Dips 30% on speech)" if duck_on else "[color=#888888][b]OFF[/b][/color]"
+    duck_pct = getattr(ctx.app, "duck_percent", 30) if ctx.app else 30
+    duck_tag = f"[color=#28a745][b]ON[/b][/color] (Dips to {duck_pct}% on speech)" if duck_on else "[color=#888888][b]OFF[/b][/color]"
 
     # Spotify info
     if not st or not st.get("username"):
@@ -713,11 +714,12 @@ async def status(ctx, arg):
         paused = st.get("paused", True)
         state_str = "[color=#f0ad4e]Paused[/color]" if paused else "[color=#28a745]Playing[/color]"
         vol = st.get("volume", ctx.cfg.initial_volume)
-        item = st.get("item")
+        track = st.get("track")
         track_info = ""
-        if item and not paused:
-            track_name = item.get("name", "Unknown")
-            artist_name = ", ".join(a.get("name") for a in item.get("artists", []))
+        if track and not paused:
+            track_name = track.get("name", "Unknown")
+            artists_raw = track.get("artist_names", [])
+            artist_name = ", ".join(artists_raw) if isinstance(artists_raw, list) else str(artists_raw)
             track_info = f"\n• Track: [b]{track_name}[/b] by {artist_name}"
         sp_info = (f"• Account: [b]{user}[/b] | Device: [b]{dev}[/b]\n"
                    f"• State: {state_str} | Volume: [b]{vol}%[/b]{track_info}")
@@ -743,23 +745,46 @@ async def duck(ctx, arg):
     if not app:
         return "Audio ducking controller unavailable."
 
-    arg = arg.strip().lower()
+    raw = arg.strip().lower()
     from .pulse import set_audio_duck
 
-    if arg in ("on", "1", "enable", "true"):
+    # Check if a custom ducking percentage is passed (e.g. !duck 20, !duck 15%)
+    val_str = raw.rstrip("%")
+    if val_str.isdigit():
+        target = int(val_str)
+        if not (5 <= target <= 90):
+            return "⚠️ Ducking volume must be between [b]5%[/b] and [b]90%[/b] (e.g. [b]!duck 20[/b])."
+        app.duck_percent = target
         app.ducking_enabled = True
-    elif arg in ("off", "0", "disable", "false"):
+        if getattr(app, "speaking_clients", None):
+            await set_audio_duck(True, target)
+        return (
+            f"🎙️ Voice Ducking volume set to [b]{target}%[/b] ([color=#28a745][b]ON[/b][/color]).\n"
+            f"Music will dip to {target}% volume whenever someone speaks."
+        )
+
+    if raw in ("on", "1", "enable", "true"):
+        app.ducking_enabled = True
+        if getattr(app, "speaking_clients", None):
+            await set_audio_duck(True, getattr(app, "duck_percent", 30))
+    elif raw in ("off", "0", "disable", "false"):
         app.ducking_enabled = False
         await set_audio_duck(False)
-    elif not arg:
+    elif not raw:
         app.ducking_enabled = not app.ducking_enabled
         if not app.ducking_enabled:
             await set_audio_duck(False)
+        elif getattr(app, "speaking_clients", None):
+            await set_audio_duck(True, getattr(app, "duck_percent", 30))
     else:
-        return f"Usage: [b]{ctx.cfg.prefix}duck [on|off][/b]"
+        return (
+            f"Usage: [b]{ctx.cfg.prefix}duck [on|off|<5-90>][/b]\n"
+            f"Examples: [b]{ctx.cfg.prefix}duck on[/b], [b]{ctx.cfg.prefix}duck off[/b], [b]{ctx.cfg.prefix}duck 20[/b]"
+        )
 
+    duck_pct = getattr(app, "duck_percent", 30)
     state = "[color=#28a745][b]ON[/b][/color]" if app.ducking_enabled else "[color=#888888][b]OFF[/b][/color]"
-    detail = "Music volume will dip by 30% when someone speaks." if app.ducking_enabled else "Music volume will stay constant."
+    detail = f"Music volume will dip to {duck_pct}% when someone speaks." if app.ducking_enabled else "Music volume will stay constant."
     return f"🎙️ Voice Ducking is now {state}. {detail}"
 
 @command("help", "h")

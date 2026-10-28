@@ -35,6 +35,10 @@ RUN curl -fsSL -o /tmp/ts3.run \
  && chmod -R a+rX /opt/ts3client \
  && rm /tmp/ts3.run
 
+# Pre-bundle ClientQuery plugin
+COPY docker/ts3_plugins/plugins/ /opt/ts3client/plugins/
+RUN chmod -R a+rX /opt/ts3client/plugins
+
 # ---- go-librespot ----
 RUN curl -fsSL \
       "https://github.com/devgianlu/go-librespot/releases/download/${GOLIBRESPOT_VERSION}/${GOLIBRESPOT_ASSET}" \

@@ -33,6 +33,7 @@ class App:
         entry = REGISTRY.get(cmd.lower())
         if not entry:
             return
+        handler, admin_only = entry
         clid = f.get("invokerid")
         uid, nick = f.get("invokeruid", ""), f.get("invokername", "?")
 
@@ -78,6 +79,38 @@ class App:
         if reply:
             await self.cq.say(self.my_cid, reply)
 
+    async def _resolve_target_cid(self):
+        if not CFG.ts_channel:
+            return None
+        target = CFG.ts_channel.strip()
+        leaf = target.split("/")[-1].strip()
+        try:
+            lines = await self.cq.cmd("channellist")
+            raw = " ".join(lines)
+            for part in raw.split("|"):
+                parts = dict(kv.split("=", 1) for kv in part.split() if "=" in kv)
+                cname = parts.get("channel_name", "").replace("\\s", " ").replace("\\/", "/")
+                if cname == leaf or cname == target:
+                    return parts.get("cid")
+        except Exception as e:
+            log.warning("Failed to resolve target channel: %s", e)
+        return None
+
+    async def _ensure_channel(self):
+        if not CFG.ts_channel or not self.my_clid:
+            return
+        cid = await self._resolve_target_cid()
+        if cid and self.my_cid != cid:
+            cmd = f"clientmove cid={cid} clid={self.my_clid}"
+            if CFG.ts_channel_password:
+                cmd += f" cpw={CFG.ts_channel_password}"
+            try:
+                await self.cq.cmd(cmd)
+                self.my_cid = cid
+                log.info("Moved bot to channel cid=%s", cid)
+            except Exception as e:
+                log.warning("Failed to move bot to channel cid=%s: %s", cid, e)
+
     async def _ts_session(self):
         """Connect to ClientQuery, register for chat events, keep the connection alive."""
         self.cq = ClientQuery(CFG.cq_host, CFG.cq_port, CFG.cq_apikey, self.on_event)
@@ -89,9 +122,11 @@ class App:
                 who = await self.cq.kv("whoami")      # fails if not connected to a server
                 self.my_clid, self.my_cid = who.get("clid"), who.get("cid")
                 self.ts_ok = bool(self.my_clid)
+                if self.ts_ok:
+                    await self._ensure_channel()
             except (QueryError, asyncio.TimeoutError):
                 self.ts_ok = False
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
     async def ts_loop(self):
         delay = 2

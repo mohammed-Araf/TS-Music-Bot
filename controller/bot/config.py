@@ -12,6 +12,8 @@ class Config:
     cq_host: str = "127.0.0.1"
     cq_port: int = 25639
     cq_apikey: str = os.environ.get("TS_CLIENTQUERY_APIKEY", "")
+    ts_channel: str = os.environ.get("TS_CHANNEL", "")
+    ts_channel_password: str = os.environ.get("TS_CHANNEL_PASSWORD", "")
 
     admin_uids: frozenset = frozenset(
         u.strip() for u in os.environ.get("ADMIN_UIDS", "").split(",") if u.strip()

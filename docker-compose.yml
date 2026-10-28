@@ -19,7 +19,9 @@ services:
     <<: *bot
     container_name: tsbot1
     env_file: [.env.common, bots/bot1.env]
-    volumes: ["./data/bot1:/data"]
+    volumes:
+      - "./data/bot1:/data"
+      - "./controller:/opt/bot/controller"
 
   bot2:
     <<: *bot

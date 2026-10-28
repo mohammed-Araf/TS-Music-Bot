@@ -31,6 +31,7 @@ RUN curl -fsSL -o /tmp/ts3.run \
  && ( [ -z "${TS3_SHA256}" ] || echo "${TS3_SHA256}  /tmp/ts3.run" | sha256sum -c - ) \
  && chmod +x /tmp/ts3.run \
  && printf "q\ny\n" | /tmp/ts3.run --noexec --target /opt/ts3client \
+ && chmod -R a+rX /opt/ts3client \
  && rm /tmp/ts3.run
 
 # ---- go-librespot ----
@@ -49,6 +50,7 @@ RUN useradd -m -u 1000 -d /data/home -s /bin/bash bot \
 COPY docker/ /opt/bot/docker/
 COPY controller/ /opt/bot/controller/
 RUN chmod +x /opt/bot/docker/*.sh \
+ && chown -R bot:bot /opt/bot \
  && python3 -m venv /opt/bot/venv \
  && /opt/bot/venv/bin/pip install --no-cache-dir -r /opt/bot/controller/requirements.txt
 

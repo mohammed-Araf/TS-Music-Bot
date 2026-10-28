@@ -27,7 +27,8 @@ fi
 
 # Persistent dirs
 mkdir -p /data/home /data/librespot /tmp/pulse
-chown -R bot:bot /data
+chown -R bot:bot /data /tmp/pulse
+chmod 777 /tmp/pulse
 
 # Pre-seed TS3 settings database if missing
 if [ ! -f /data/home/.ts3client/settings.db ] && [ -f /opt/bot/docker/templates/settings.db ]; then

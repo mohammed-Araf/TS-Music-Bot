@@ -184,21 +184,4 @@ Running multiple bots is as simple as:
 
 1. Copy `bots/bot1.example.env` to `bots/bot2.env` with a unique `TS_NICK` and `SPOTIFY_DEVICE_NAME`.
 2. Uncomment or add the `bot2` service in `docker-compose.yml`.
-3. Run Step 4 (setup mode) for `bot2` with its own Spotify Premium account.
-4. Launch with `docker compose up -d bot2`.
-
----
-
-## 📜 Preserved Legacy Code
-
-The previous Kotlin/JavaFX bot implementation is preserved intact on the [`legacy-kotlin-bot`](file:///Users/araf/Documents/Projects/ts3-musicbot-master) git branch. To inspect it:
-
-```bash
-git checkout legacy-kotlin-bot
-```
-
-To switch back to the modern Docker bot:
-
-```bash
-git checkout main
-```
+3. Launch with `docker compose up -d bot2` and type `!login` in chat to pair its Spotify account!

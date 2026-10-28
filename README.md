@@ -138,11 +138,30 @@ All commands use the prefix defined in `.env.common` (default `!`):
 | `!prev` (or `!back`) | Everyone | Return to previous track. |
 | `!vol <0-80>` (or `!v`) | Everyone | Adjust volume (clamped to `MAX_VOLUME`). |
 | `!np` | Everyone | Show currently playing song title and artist. |
+| `!myroles` | Everyone | View your current UID, Server Group IDs, and Channel Group ID. |
 | `!help` | Everyone | Show list of available commands. |
 | `!restart` | Admin | Restart the container process. |
 | `!reconnect` | Admin | Reconnect TeamSpeak 3 client to the channel. |
 | `!audio` | Admin | Restart `go-librespot` audio engine. |
 | `!status` | Admin | Check Spotify API connection and health. |
+
+### Role-Based Access Control (RBAC)
+
+In your `.env.common` or `bots/bot1.env`, you can configure permissions by TeamSpeak Server Groups (roles):
+
+```env
+# Server Group IDs that have Admin access (!status, !restart, !audio, etc.)
+ADMIN_SERVER_GROUPS=6
+
+# Server Group IDs allowed to play music (!play, !queue, !skip, etc.)
+# Leave empty to allow anyone in the channel to play music.
+ALLOWED_SERVER_GROUPS=15,20
+
+# Optional: Specific user UIDs who always have admin rights
+ADMIN_UIDS=e8Y8...=
+```
+> [!TIP]
+> Type `!myroles` in TeamSpeak channel chat at any time to see your current Server Group IDs!
 
 ---
 

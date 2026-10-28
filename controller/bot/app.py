@@ -33,16 +33,43 @@ class App:
         entry = REGISTRY.get(cmd.lower())
         if not entry:
             return
-        handler, admin_only = entry
+        clid = f.get("invokerid")
         uid, nick = f.get("invokeruid", ""), f.get("invokername", "?")
-        if admin_only and uid not in CFG.admin_uids:
+
+        # Query user's server groups and channel group from client cache
+        user_groups = set()
+        ch_group = ""
+        if clid:
+            try:
+                cv = await self.cq.kv(f"clientvariable clid={clid} client_servergroups client_channel_group_id")
+                raw_groups = cv.get("client_servergroups", "")
+                user_groups = set(g.strip() for g in raw_groups.split(",") if g.strip())
+                ch_group = cv.get("client_channel_group_id", "")
+            except Exception:
+                pass
+
+        is_admin = (uid in CFG.admin_uids) or bool(user_groups & CFG.admin_server_groups)
+        cmd_lower = cmd.lower()
+
+        if admin_only and not is_admin:
             await self.cq.say(self.my_cid, "Admins only.")
             return
+
+        # Check playback role requirement (exempt admins and info commands)
+        if (
+            CFG.allowed_server_groups
+            and not is_admin
+            and cmd_lower not in ("myroles", "roles", "help", "h")
+            and not bool(user_groups & CFG.allowed_server_groups)
+        ):
+            await self.cq.say(self.my_cid, "You need the music role to use this bot.")
+            return
+
         now = time.time()
         if now - self.last_cmd.get(uid, 0) < CFG.cooldown:
             return
         self.last_cmd[uid] = now
-        ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid)
+        ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid, server_groups=user_groups, channel_group=ch_group)
         try:
             reply = await handler(ctx, arg.strip())
         except Exception as e:

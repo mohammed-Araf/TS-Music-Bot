@@ -11,9 +11,11 @@ def command(name, *aliases, admin=False):
     return deco
 
 class Ctx:
-    def __init__(self, cfg, cq, lr, search, uid, nick, cid):
+    def __init__(self, cfg, cq, lr, search, uid, nick, cid, server_groups=None, channel_group=None):
         self.cfg, self.cq, self.lr, self.search = cfg, cq, lr, search
         self.uid, self.nick, self.cid = uid, nick, cid
+        self.server_groups = server_groups or set()
+        self.channel_group = channel_group or ""
 
 # ---------------- music commands ----------------
 @command("play", "p")
@@ -89,11 +91,16 @@ async def np(ctx, arg):
     state = "paused" if st.get("paused") else "playing"
     return f'{state}: {t.get("name", "?")} - {artists}'
 
+@command("myroles", "roles")
+async def myroles(ctx, arg):
+    groups = ", ".join(sorted(ctx.server_groups)) if ctx.server_groups else "none"
+    return f"{ctx.nick} | UID: {ctx.uid} | Server Groups: [{groups}] | Channel Group: {ctx.channel_group or 'none'}"
+
 @command("help", "h")
 async def help_(ctx, arg):
     p = ctx.cfg.prefix
     return (f"{p}play <name|link>, {p}queue <name|link>, {p}pause, {p}resume, {p}skip, "
-            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np | admin: {p}restart, "
+            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}myroles | admin: {p}restart, "
             f"{p}reconnect, {p}audio, {p}status")
 
 # ---------------- bot control (admin) ----------------

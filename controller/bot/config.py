@@ -16,6 +16,12 @@ class Config:
     admin_uids: frozenset = frozenset(
         u.strip() for u in os.environ.get("ADMIN_UIDS", "").split(",") if u.strip()
     )
+    admin_server_groups: frozenset = frozenset(
+        g.strip() for g in os.environ.get("ADMIN_SERVER_GROUPS", "").split(",") if g.strip()
+    )
+    allowed_server_groups: frozenset = frozenset(
+        g.strip() for g in os.environ.get("ALLOWED_SERVER_GROUPS", "").split(",") if g.strip()
+    )
 
     lr_url: str = "http://127.0.0.1:3678"
     sp_client_id: str = os.environ.get("SPOTIFY_CLIENT_ID", "")

@@ -706,7 +706,8 @@ async def status(ctx, arg):
     # Ducking state
     duck_on = ctx.app.ducking_enabled if ctx.app else False
     duck_pct = getattr(ctx.app, "duck_percent", 30) if ctx.app else 30
-    duck_tag = f"[color=#28a745][b]ON[/b][/color] (Dips to {duck_pct}% on speech)" if duck_on else "[color=#888888][b]OFF[/b][/color]"
+    hold_s = getattr(ctx.app, "duck_hold_time", 1.8) if ctx.app else 1.8
+    duck_tag = f"[color=#28a745][b]ON[/b][/color] (Dips to {duck_pct}% | Hold: {hold_s:.1f}s)" if duck_on else "[color=#888888][b]OFF[/b][/color]"
 
     # Spotify info
     if not st or not st.get("username"):
@@ -751,6 +752,23 @@ async def duck(ctx, arg):
     raw = arg.strip().lower()
     from .pulse import set_audio_duck
 
+    # Check if setting conversation hold time (e.g. !duck hold 2.0, !duck delay 1.5)
+    if raw.startswith("hold") or raw.startswith("delay") or raw.startswith("window"):
+        parts = raw.split()
+        if len(parts) >= 2:
+            try:
+                sec = float(parts[1].rstrip("s"))
+                if not (0.5 <= sec <= 10.0):
+                    return "⚠️ Hold window must be between [b]0.5[/b] and [b]10.0[/b] seconds (e.g. [b]!duck hold 2.0[/b])."
+                app.duck_hold_time = sec
+                return (
+                    f"⏱️ Voice Ducking conversation hold window set to [b]{sec:.1f}s[/b].\n"
+                    f"Music volume will stay lowered during conversational pauses and only restore after [b]{sec:.1f}s[/b] of sustained silence."
+                )
+            except ValueError:
+                pass
+        return f"Usage: [b]{ctx.cfg.prefix}duck hold <seconds>[/b] (e.g. [b]{ctx.cfg.prefix}duck hold 2.0[/b])"
+
     # Check if a custom ducking percentage is passed (e.g. !duck 20, !duck 15%)
     val_str = raw.rstrip("%")
     if val_str.isdigit():
@@ -761,33 +779,48 @@ async def duck(ctx, arg):
         app.ducking_enabled = True
         if getattr(app, "speaking_clients", None):
             await set_audio_duck(True, target)
+            app._is_ducked = True
+        hold_s = getattr(app, "duck_hold_time", 1.8)
         return (
             f"🎙️ Voice Ducking volume set to [b]{target}%[/b] ([color=#28a745][b]ON[/b][/color]).\n"
-            f"Music will dip to {target}% volume whenever someone speaks."
+            f"Music will dip to {target}% volume whenever someone speaks (hold window: [b]{hold_s:.1f}s[/b])."
         )
 
     if raw in ("on", "1", "enable", "true"):
         app.ducking_enabled = True
         if getattr(app, "speaking_clients", None):
             await set_audio_duck(True, getattr(app, "duck_percent", 30))
+            app._is_ducked = True
     elif raw in ("off", "0", "disable", "false"):
         app.ducking_enabled = False
+        if hasattr(app, "_cancel_unduck_timer"):
+            app._cancel_unduck_timer()
         await set_audio_duck(False)
+        app._is_ducked = False
     elif not raw:
         app.ducking_enabled = not app.ducking_enabled
         if not app.ducking_enabled:
+            if hasattr(app, "_cancel_unduck_timer"):
+                app._cancel_unduck_timer()
             await set_audio_duck(False)
+            app._is_ducked = False
         elif getattr(app, "speaking_clients", None):
             await set_audio_duck(True, getattr(app, "duck_percent", 30))
+            app._is_ducked = True
     else:
         return (
-            f"Usage: [b]{ctx.cfg.prefix}duck [on|off|<5-90>][/b]\n"
-            f"Examples: [b]{ctx.cfg.prefix}duck on[/b], [b]{ctx.cfg.prefix}duck off[/b], [b]{ctx.cfg.prefix}duck 20[/b]"
+            f"Usage: [b]{ctx.cfg.prefix}duck [on|off|<5-90>|hold <sec>][/b]\n"
+            f"Examples: [b]{ctx.cfg.prefix}duck on[/b], [b]{ctx.cfg.prefix}duck 20[/b], [b]{ctx.cfg.prefix}duck hold 2.0[/b]"
         )
 
     duck_pct = getattr(app, "duck_percent", 30)
+    hold_s = getattr(app, "duck_hold_time", 1.8)
     state = "[color=#28a745][b]ON[/b][/color]" if app.ducking_enabled else "[color=#888888][b]OFF[/b][/color]"
-    detail = f"Music volume will dip to {duck_pct}% when someone speaks." if app.ducking_enabled else "Music volume will stay constant."
+    detail = (
+        f"Music volume will dip to {duck_pct}% on speech and hold for {hold_s:.1f}s after speaking stops."
+        if app.ducking_enabled
+        else "Music volume will stay constant."
+    )
     return f"🎙️ Voice Ducking is now {state}. {detail}"
 
 @command("help", "h")

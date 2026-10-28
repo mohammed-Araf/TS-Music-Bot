@@ -34,6 +34,7 @@ class Config:
 
     auto_ducking: bool = os.environ.get("AUTO_DUCKING", "true").lower() in ("true", "1", "yes")
     duck_percent: int = _i("DUCK_PERCENT", 30)
+    duck_hold_time: float = _f("DUCK_HOLD_TIME", 1.8)
     eco_mode: bool = os.environ.get("ECO_MODE", "true").lower() in ("true", "1", "yes")
     eco_resume_window: int = _i("ECO_RESUME_WINDOW", 300)
     chill_autoplay_uri: str = os.environ.get("CHILL_AUTOPLAY_URI", "spotify:playlist:37i9dQZF1DWWQRwui0ExPn")

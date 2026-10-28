@@ -25,11 +25,46 @@ class App:
         self.spotify_ok = False
         self.ducking_enabled = CFG.auto_ducking
         self.duck_percent = CFG.duck_percent
+        self.duck_hold_time = CFG.duck_hold_time
         self.channel_clients = set()
         self.speaking_clients = set()
+        self._is_ducked: bool = False
+        self._unduck_timer_task = None
         self._paused_by_empty_channel: bool = False
         self._empty_channel_time: float = None
         self._ready_for_ambient_autoplay: bool = False
+
+    def _cancel_unduck_timer(self):
+        """Cancels any pending hysteresis hold timer."""
+        if self._unduck_timer_task and not self._unduck_timer_task.done():
+            self._unduck_timer_task.cancel()
+        self._unduck_timer_task = None
+
+    def _schedule_unduck(self):
+        """
+        Schedules unducking with a hold window (hysteresis delay).
+        During a conversation between multiple people, brief pauses between
+        sentences or speakers will not cause volume to bounce back up until
+        everyone has remained silent for the full hold duration.
+        """
+        self._cancel_unduck_timer()
+        if not self._is_ducked:
+            return
+
+        async def _delayed_unduck():
+            try:
+                await asyncio.sleep(self.duck_hold_time)
+                # Confirm everyone is still silent before releasing
+                if not self.speaking_clients and self._is_ducked:
+                    log.debug("Hold window (%.1fs) elapsed with zero talkers; releasing duck fader.", self.duck_hold_time)
+                    await set_audio_duck(False)
+                    self._is_ducked = False
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log.warning("Delayed unduck error: %s", e)
+
+        self._unduck_timer_task = asyncio.create_task(_delayed_unduck())
 
     async def _handle_talk_status(self, f):
         clid = f.get("clid")
@@ -40,13 +75,22 @@ class App:
             return
 
         if status == "1":
+            # Talker started: cancel any pending hold timer immediately!
+            self._cancel_unduck_timer()
             self.speaking_clients.add(clid)
             if self.ducking_enabled:
+                self._is_ducked = True
                 await set_audio_duck(True, self.duck_percent)
         elif status == "0":
             self.speaking_clients.discard(clid)
+            # Talker stopped: if nobody else is talking, wait for the hold window
             if not self.speaking_clients:
-                await set_audio_duck(False)
+                if self.ducking_enabled and self._is_ducked:
+                    self._schedule_unduck()
+                else:
+                    self._cancel_unduck_timer()
+                    await set_audio_duck(False)
+                    self._is_ducked = False
 
     async def _handle_channel_empty(self):
         """Immediately pauses playback and sets bot away when the last user leaves."""
@@ -54,6 +98,9 @@ class App:
             return
         if self._empty_channel_time is None:
             self._empty_channel_time = time.time()
+            self._cancel_unduck_timer()
+            await set_audio_duck(False)
+            self._is_ducked = False
             st = None
             try:
                 st = await self.lr.status()
@@ -150,10 +197,18 @@ class App:
         elif name == "notifyclientleftview":
             self.channel_clients.discard(clid)
             self.speaking_clients.discard(clid)
-            if not self.speaking_clients:
-                await set_audio_duck(False)
             if not self.channel_clients:
+                self._cancel_unduck_timer()
+                await set_audio_duck(False)
+                self._is_ducked = False
                 asyncio.create_task(self._handle_channel_empty())
+            elif not self.speaking_clients:
+                if self.ducking_enabled and self._is_ducked:
+                    self._schedule_unduck()
+                else:
+                    self._cancel_unduck_timer()
+                    await set_audio_duck(False)
+                    self._is_ducked = False
         elif name == "notifyclientmoved":
             ctid = f.get("ctid")
             if ctid == self.my_cid:
@@ -164,10 +219,18 @@ class App:
             else:
                 self.channel_clients.discard(clid)
                 self.speaking_clients.discard(clid)
-                if not self.speaking_clients:
-                    await set_audio_duck(False)
                 if not self.channel_clients:
+                    self._cancel_unduck_timer()
+                    await set_audio_duck(False)
+                    self._is_ducked = False
                     asyncio.create_task(self._handle_channel_empty())
+                elif not self.speaking_clients:
+                    if self.ducking_enabled and self._is_ducked:
+                        self._schedule_unduck()
+                    else:
+                        self._cancel_unduck_timer()
+                        await set_audio_duck(False)
+                        self._is_ducked = False
 
     async def _sync_channel_clients(self):
         if not self.my_cid:
@@ -182,11 +245,21 @@ class App:
                 ctype = parts.get("client_type")
                 if cid and cid != self.my_clid and ctype != "1":
                     curr.add(cid)
+            prev_speaking = bool(self.speaking_clients)
             prev_empty = (len(self.channel_clients) == 0)
             self.channel_clients = curr
             self.speaking_clients &= self.channel_clients
-            if not self.speaking_clients:
+            if not self.channel_clients:
+                self._cancel_unduck_timer()
                 await set_audio_duck(False)
+                self._is_ducked = False
+            elif prev_speaking and not self.speaking_clients:
+                if self.ducking_enabled and self._is_ducked:
+                    self._schedule_unduck()
+                else:
+                    self._cancel_unduck_timer()
+                    await set_audio_duck(False)
+                    self._is_ducked = False
 
             if len(self.channel_clients) == 0 and not prev_empty:
                 asyncio.create_task(self._handle_channel_empty())

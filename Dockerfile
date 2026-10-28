@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 # ---- pinned versions ----
 ARG TS3_VERSION=3.6.2
-ARG TS3_SHA256=
+ARG TS3_SHA256=59f110438971a23f904a700e7dd0a811cf99d4e6b975ba3aa45962d43b006422
 ARG GOLIBRESPOT_VERSION=v0.10.5
 ARG GOLIBRESPOT_ASSET=go-librespot_linux_x86_64.tar.gz
 
@@ -30,7 +30,7 @@ RUN curl -fsSL -o /tmp/ts3.run \
  && sha256sum /tmp/ts3.run \
  && ( [ -z "${TS3_SHA256}" ] || echo "${TS3_SHA256}  /tmp/ts3.run" | sha256sum -c - ) \
  && chmod +x /tmp/ts3.run \
- && /tmp/ts3.run --noexec --target /opt/ts3client \
+ && printf "q\ny\n" | /tmp/ts3.run --noexec --target /opt/ts3client \
  && rm /tmp/ts3.run
 
 # ---- go-librespot ----

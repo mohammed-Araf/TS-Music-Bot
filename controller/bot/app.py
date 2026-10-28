@@ -270,7 +270,7 @@ class App:
             await asyncio.sleep(15)
 
     async def health(self, request):
-        ok = self.ts_ok and self.spotify_ok
+        ok = self.ts_ok
         return web.json_response({"ts": self.ts_ok, "spotify": self.spotify_ok},
                                  status=200 if ok else 503)
 
@@ -296,23 +296,27 @@ class App:
 
         # best-effort: set initial volume once go-librespot is up
         asyncio.create_task(self._init_volume())
-        asyncio.create_task(self._ui_ticker_loop())
-        await asyncio.gather(self.ts_loop(), self.spotify_loop(), self.spotify_events_loop())
+        await asyncio.gather(
+            self.ts_loop(),
+            self.spotify_loop(),
+            self.spotify_events_loop(),
+            self._ui_ticker_loop(),
+        )
 
     async def _ui_ticker_loop(self):
         """
-        Updates the live TeamSpeak away message / description every 5s with progress bar,
+        Updates the live TeamSpeak away message every 5s with progress bar,
         track metadata, volume, and ducking status. Also enforces Eco Mode auto-pause.
         """
         last_away_msg = None
         while True:
             try:
-                if self.ts_ok and self.spotify_ok and self.cq and self.cq.connected:
+                if self.ts_ok and self.cq and self.cq.connected:
                     # Enforce Eco Mode
                     if CFG.eco_mode and self._eco_idle_start and (time.time() - self._eco_idle_start > 300):
                         try:
                             st = await self.lr.status()
-                            if st and not st.get("paused"):
+                            if st and not st.get("paused") and not st.get("stopped"):
                                 log.info("Eco Mode: Channel empty for 5 minutes. Auto-pausing playback.")
                                 await self.lr.pause()
                                 await set_audio_mute(True)
@@ -329,12 +333,18 @@ class App:
 
                     duck_tag = "Duck:ON" if self.ducking_enabled else "Duck:OFF"
                     new_msg = None
-                    if st and not st.get("paused") and st.get("item"):
-                        item = st.get("item", {})
-                        title = item.get("name", "Unknown Track")
-                        artists = ", ".join(a.get("name") for a in item.get("artists", []))
-                        dur_ms = item.get("duration_ms", 0)
-                        pos_ms = st.get("progress_ms", 0)
+                    away_flag = 1
+
+                    if not st or not st.get("username"):
+                        new_msg = f"⚠️ Disconnected | Type {CFG.prefix}login"
+                        away_flag = 1
+                    elif st and not st.get("paused") and not st.get("stopped") and st.get("track"):
+                        track = st.get("track", {})
+                        title = track.get("name", "Unknown Track")
+                        artists_raw = track.get("artist_names", [])
+                        artists = ", ".join(artists_raw) if isinstance(artists_raw, list) else str(artists_raw)
+                        dur_ms = track.get("duration", 0)
+                        pos_ms = track.get("position", 0)
                         pos_s, dur_s = pos_ms // 1000, dur_ms // 1000
                         if dur_s > 0:
                             pct = min(max(pos_s / dur_s, 0.0), 1.0)
@@ -347,20 +357,30 @@ class App:
 
                         base_len = len(f"▶  [{bar}] {time_str} [{duck_tag}]")
                         rem = 80 - base_len - 1
-                        track = f"{title} - {artists}" if artists else title
-                        if len(track) > rem:
-                            track = track[:rem - 1] + "…"
-                        new_msg = f"▶ {track} [{bar}] {time_str} [{duck_tag}]"
+                        track_name = f"{title} - {artists}" if artists else title
+                        if len(track_name) > rem:
+                            track_name = track_name[:rem - 1] + "…"
+                        new_msg = f"▶ {track_name} [{bar}] {time_str} [{duck_tag}]"
+                        away_flag = 1
                     elif st and st.get("paused"):
                         vol = st.get("volume", CFG.initial_volume)
                         new_msg = f"⏸️ Paused ({vol}%) [{duck_tag}]"
+                        away_flag = 1
+                    else:
+                        new_msg = ""
+                        away_flag = 0
 
-                    if new_msg and new_msg != last_away_msg:
+                    if new_msg != last_away_msg:
                         try:
-                            await self.cq.cmd(f"clientupdate client_away=0 client_away_message={escape(new_msg)}")
+                            cmd = f"clientupdate client_away={away_flag}"
+                            if new_msg:
+                                cmd += f" client_away_message={escape(new_msg)}"
+                            else:
+                                cmd += " client_away_message="
+                            await self.cq.cmd(cmd)
                             last_away_msg = new_msg
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("Failed to update away message: %s", e)
             except Exception as e:
                 log.debug("UI ticker error: %s", e)
             await asyncio.sleep(5)

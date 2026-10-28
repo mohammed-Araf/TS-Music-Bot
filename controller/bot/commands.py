@@ -50,10 +50,12 @@ def _supervisor(*args):
 async def play(ctx, arg):
     try:
         st = await ctx.lr.status()
-        if st is not None and not st.get("username"):
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
     except Exception as e:
         log.debug("status check before play: %s", e)
+        st = None
+
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
 
     if not arg:
         allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
@@ -124,10 +126,12 @@ async def play(ctx, arg):
 async def queue(ctx, arg):
     try:
         st = await ctx.lr.status()
-        if st is not None and not st.get("username"):
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
     except Exception as e:
         log.debug("status check before queue: %s", e)
+        st = None
+
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
 
     if not arg:
         return f"Usage: {ctx.cfg.prefix}queue <song name or Spotify link>"
@@ -189,11 +193,13 @@ async def pause(ctx, arg):
     async with GUARD.lock:
         try:
             st = await ctx.lr.status()
-            if st is not None and not st.get("username"):
-                await set_audio_mute(False)
-                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
         except Exception as e:
             log.debug("status check before pause: %s", e)
+            st = None
+
+        if not st or not st.get("username"):
+            await set_audio_mute(False)
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
         try:
             await asyncio.wait_for(ctx.lr.pause(), timeout=8.0)
         except Exception as e:
@@ -217,11 +223,13 @@ async def stop(ctx, arg):
     async with GUARD.lock:
         try:
             st = await ctx.lr.status()
-            if st is not None and not st.get("username"):
-                await set_audio_mute(False)
-                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
         except Exception as e:
             log.debug("status check before stop: %s", e)
+            st = None
+
+        if not st or not st.get("username"):
+            await set_audio_mute(False)
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
         try:
             await asyncio.wait_for(ctx.lr.pause(), timeout=8.0)
         except Exception as e:
@@ -238,12 +246,14 @@ async def resume(ctx, arg):
     async with GUARD.lock:
         try:
             st = await ctx.lr.status()
-            if st is not None and not st.get("username"):
-                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-            if st and not st.get("paused") and not st.get("stopped"):
-                return "Already playing."
         except Exception as e:
             log.debug("status check before resume: %s", e)
+            st = None
+
+        if not st or not st.get("username"):
+            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        if st and not st.get("paused") and not st.get("stopped"):
+            return "Already playing."
 
         await set_audio_mute(False)
         try:
@@ -264,6 +274,14 @@ async def skip(ctx, arg):
     if not allowed:
         return reason
 
+    try:
+        st = await ctx.lr.status()
+    except Exception:
+        st = None
+
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+
     async with GUARD.lock:
         GUARD.mark_skip()
         await set_audio_mute(False)
@@ -281,6 +299,14 @@ async def prev(ctx, arg):
     allowed, reason = GUARD.can_skip(is_admin=ctx.is_admin)
     if not allowed:
         return reason
+
+    try:
+        st = await ctx.lr.status()
+    except Exception:
+        st = None
+
+    if not st or not st.get("username"):
+        return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
 
     async with GUARD.lock:
         GUARD.mark_skip()

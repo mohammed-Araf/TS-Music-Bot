@@ -16,7 +16,7 @@ class PlayerGuard:
     Guards the audio player against multi-user abuse, play/pause wars,
     concurrent request thrashing, and rapid spam in TeamSpeak.
     """
-    def __init__(self, anti_thrash_cooldown=1.2, skip_cooldown=1.8, vol_cooldown=1.0, max_queue_per_min=3):
+    def __init__(self, anti_thrash_cooldown=1.0, skip_cooldown=0.8, vol_cooldown=0.5, max_queue_per_min=5):
         self.lock = asyncio.Lock()
         self.anti_thrash_cooldown = anti_thrash_cooldown
         self.skip_cooldown = skip_cooldown

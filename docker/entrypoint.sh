@@ -53,6 +53,11 @@ EOF
   chown -R bot:bot /data/home/.ts3client
 fi
 
+# Ensure ALSA default device routes to PulseAudio 'music' sink
+if [ ! -f /etc/asound.conf ] && [ -f /opt/bot/docker/asound.conf ]; then
+  cp /opt/bot/docker/asound.conf /etc/asound.conf
+fi
+
 # Render go-librespot config (state/credentials persist alongside it in /data/librespot)
 envsubst < /opt/bot/docker/go-librespot.config.tmpl.yml > /data/librespot/config.yml
 chown bot:bot /data/librespot/config.yml

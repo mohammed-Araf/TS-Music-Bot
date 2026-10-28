@@ -267,7 +267,7 @@ async def skip(ctx, arg):
         GUARD.mark_skip()
         await set_audio_mute(False)
         try:
-            await asyncio.wait_for(ctx.lr.next(), timeout=12.0)
+            await asyncio.wait_for(ctx.lr.next(), timeout=5.0)
             return "⏭️ Skipped to next track."
         except asyncio.TimeoutError:
             return "⏳ Skip timed out. The next track may still be buffering."
@@ -285,7 +285,7 @@ async def prev(ctx, arg):
         GUARD.mark_skip()
         await set_audio_mute(False)
         try:
-            await asyncio.wait_for(ctx.lr.prev(), timeout=12.0)
+            await asyncio.wait_for(ctx.lr.prev(), timeout=5.0)
             return "⏮️ Returned to previous track."
         except asyncio.TimeoutError:
             return "⏳ Returning to previous track timed out."

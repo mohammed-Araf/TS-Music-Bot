@@ -3,9 +3,8 @@ log_level: info
 device_name: "${SPOTIFY_DEVICE_NAME}"
 device_type: speaker
 
-audio_backend: pulseaudio
-audio_device: music          # PulseAudio sink name
-audio_backend_runtime_socket: "unix:/tmp/pulse.sock"
+audio_backend: alsa
+audio_device: default
 
 
 bitrate: 320                 # Premium

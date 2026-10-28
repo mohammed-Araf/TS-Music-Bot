@@ -52,6 +52,7 @@ RUN useradd -m -u 1000 -d /data/home -s /bin/bash bot \
  && chown -R bot:bot /data
 
 # ---- app ----
+COPY docker/asound.conf /etc/asound.conf
 COPY docker/ /opt/bot/docker/
 COPY controller/ /opt/bot/controller/
 RUN chmod +x /opt/bot/docker/*.sh \

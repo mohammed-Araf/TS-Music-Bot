@@ -7,6 +7,8 @@ from .spotify import Librespot, Search
 from .tsescape import strip_bbcode
 from .commands import REGISTRY, Ctx
 from .ratelimit import RateLimiter
+from .pulse import set_audio_mute
+from .guard import GUARD, ACTION_PLAY, ACTION_PAUSE, ACTION_STOP
 
 log = logging.getLogger("app")
 
@@ -203,7 +205,41 @@ class App:
 
         # best-effort: set initial volume once go-librespot is up
         asyncio.create_task(self._init_volume())
-        await asyncio.gather(self.ts_loop(), self.spotify_loop())
+        await asyncio.gather(self.ts_loop(), self.spotify_loop(), self.spotify_events_loop())
+
+    async def spotify_events_loop(self):
+        """
+        Listens to go-librespot WebSocket /events to sync real-time playback
+        state when controlled directly from mobile/desktop Spotify Connect apps.
+        """
+        ws_url = CFG.lr_url.replace("http://", "ws://") + "/events"
+        while True:
+            try:
+                async with self.session.ws_connect(ws_url, timeout=10) as ws:
+                    log.info("Connected to go-librespot event stream")
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            try:
+                                ev = json.loads(msg.data)
+                                etype = ev.get("type")
+                                data = ev.get("data") or {}
+                                if etype == "playing":
+                                    await set_audio_mute(False)
+                                    GUARD.mark_state(ACTION_PLAY)
+                                elif etype in ("paused", "stopped"):
+                                    await set_audio_mute(True)
+                                    GUARD.mark_state(ACTION_PAUSE if etype == "paused" else ACTION_STOP)
+                                elif etype == "volume":
+                                    vol = data.get("value")
+                                    if vol is not None:
+                                        GUARD.mark_volume(int(vol))
+                            except Exception as ex:
+                                log.debug("Error processing player event: %s", ex)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            break
+            except Exception as e:
+                log.debug("Event stream reconnecting: %s", e)
+            await asyncio.sleep(5)
 
     async def _init_volume(self):
         for _ in range(30):

@@ -12,7 +12,7 @@ TS_PORT="9987"                            # TeamSpeak Server Port (default: 9987
 TS_CHANNEL="Music"                        # Target Music Channel Name
 TS_CHANNEL_PASSWORD=""                    # Channel Password (leave empty if none)
 TS_SERVER_PASSWORD=""                     # Server Password (leave empty if none)
-TS_NICK="MusicBot1"                       # Bot Nickname in TeamSpeak
+TS_NICK="☠ ʀᴀɢᴇ ʙᴏᴛ ☠"                       # Bot Nickname in TeamSpeak
 ADMIN_SERVER_GROUPS="6"                   # Server Group ID for Bot Admins (6 = Server Admin)
 ALLOWED_SERVER_GROUPS="50"                # Server Group ID allowed to play music (blank for everyone)
 

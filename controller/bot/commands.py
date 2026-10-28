@@ -1,6 +1,7 @@
 import os, json, time, asyncio, subprocess, logging
 from .spotify import to_uri, SpotifyRateLimitError, SpotifyAuthError
 from .pulse import set_audio_mute
+from .guard import GUARD, ACTION_PLAY, ACTION_PAUSE, ACTION_STOP
 
 log = logging.getLogger("commands")
 
@@ -54,19 +55,30 @@ async def play(ctx, arg):
         log.debug("status check before play: %s", e)
 
     if not arg:
-        await set_audio_mute(False)
-        try:
-            await ctx.lr.resume()
-        except Exception:
-            return (
-                "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
-                f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
-            )
-        return "Resumed."
+        allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
+        if not allowed:
+            return reason
+
+        async with GUARD.lock:
+            await set_audio_mute(False)
+            try:
+                await asyncio.wait_for(ctx.lr.resume(), timeout=10.0)
+            except asyncio.TimeoutError:
+                return "⏳ Resume timed out. Spotify may still be connecting."
+            except Exception:
+                return (
+                    "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
+                    f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
+                )
+            GUARD.mark_state(ACTION_PLAY)
+            return "Resumed."
+
     uri, label = to_uri(arg), arg
     if not uri:
         try:
-            hits = await ctx.search.tracks(arg, limit=1)
+            hits = await asyncio.wait_for(ctx.search.tracks(arg, limit=1), timeout=8.0)
+        except asyncio.TimeoutError:
+            return "⚠️ Spotify search timed out. Try pasting a direct Spotify track or playlist link."
         except SpotifyRateLimitError:
             return (
                 "⚠️ [b]Spotify Search Rate Limit Reached![/b]\n"
@@ -80,20 +92,32 @@ async def play(ctx, arg):
                 "• Paste a [b]direct Spotify song/playlist link[/b] to play immediately, or\n"
                 f"• Type [b]{ctx.cfg.prefix}spotifykeys[/b] to set up free search keys step-by-step!"
             )
+        except Exception as e:
+            log.warning("Spotify search failed: %s", e)
+            return "⚠️ Spotify search is temporarily busy. Try pasting a direct Spotify link instead."
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
-    await set_audio_mute(False)
-    try:
-        await ctx.lr.play(uri)
-    except Exception as e:
-        log.exception("play failed for uri=%s: %s", uri, e)
-        return (
-            "⚠️ [b]Playback Failed:[/b] Spotify was unable to stream this track.\n"
-            "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
-            f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
-        )
-    return f"Playing: {label}"
+
+    allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    async with GUARD.lock:
+        await set_audio_mute(False)
+        try:
+            await asyncio.wait_for(ctx.lr.play(uri), timeout=15.0)
+        except asyncio.TimeoutError:
+            return "⏳ Spotify is taking longer than usual to buffer this track. Please wait a moment."
+        except Exception as e:
+            log.exception("play failed for uri=%s: %s", uri, e)
+            return (
+                "⚠️ [b]Playback Failed:[/b] Spotify was unable to stream this track.\n"
+                "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
+                f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
+            )
+        GUARD.mark_state(ACTION_PLAY)
+        return f"Playing: {label}"
 
 @command("queue", "q")
 async def queue(ctx, arg):
@@ -106,10 +130,13 @@ async def queue(ctx, arg):
 
     if not arg:
         return f"Usage: {ctx.cfg.prefix}queue <song name or Spotify link>"
+
     uri, label = to_uri(arg), arg
     if not uri:
         try:
-            hits = await ctx.search.tracks(arg, limit=1)
+            hits = await asyncio.wait_for(ctx.search.tracks(arg, limit=1), timeout=8.0)
+        except asyncio.TimeoutError:
+            return "⚠️ Spotify search timed out. Try pasting a direct Spotify track link."
         except SpotifyRateLimitError:
             return (
                 "⚠️ [b]Spotify Search Rate Limit Reached![/b]\n"
@@ -123,115 +150,187 @@ async def queue(ctx, arg):
                 "• Paste a [b]direct Spotify song/playlist link[/b] to play immediately, or\n"
                 f"• Type [b]{ctx.cfg.prefix}spotifykeys[/b] to set up free search keys step-by-step!"
             )
+        except Exception as e:
+            log.warning("Spotify search failed in queue: %s", e)
+            return "⚠️ Spotify search is temporarily busy. Try pasting a direct Spotify link."
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
-    try:
-        await ctx.lr.enqueue(uri)
-    except Exception as e:
-        log.exception("queue failed for uri=%s: %s", uri, e)
-        return (
-            "⚠️ [b]Queue Failed:[/b] Spotify was unable to queue this track.\n"
-            "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
-            f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
-        )
-    return f"Queued: {label}"
+
+    allowed, reason = GUARD.can_queue_track(ctx.uid, uri, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    async with GUARD.lock:
+        try:
+            await asyncio.wait_for(ctx.lr.enqueue(uri), timeout=10.0)
+            GUARD.mark_queued(ctx.uid, uri)
+            return f"Queued: {label}"
+        except asyncio.TimeoutError:
+            return "⏳ Queue request timed out. Please try again."
+        except Exception as e:
+            log.exception("queue failed for uri=%s: %s", uri, e)
+            return (
+                "⚠️ [b]Queue Failed:[/b] Spotify was unable to queue this track.\n"
+                "This usually happens if your [b]Spotify Premium subscription has expired[/b] or the account was logged out.\n"
+                f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
+            )
 
 @command("pause")
 async def pause(ctx, arg):
+    allowed, reason = GUARD.can_toggle_state(ACTION_PAUSE, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
     # Instantly mute PulseAudio capture/sink for zero-delay hardware silence
     await set_audio_mute(True)
-    try:
-        st = await ctx.lr.status()
-        if st is not None and not st.get("username"):
-            await set_audio_mute(False)
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-    except Exception as e:
-        log.debug("status check before pause: %s", e)
-    try:
-        await ctx.lr.pause()
-        return "⏸️ Playback paused."
-    except Exception as e:
-        log.warning("pause failed, trying playpause fallback: %s", e)
+
+    async with GUARD.lock:
         try:
-            await ctx.lr.playpause()
-            return "⏸️ Playback paused."
-        except Exception as e2:
-            log.exception("pause and playpause failed: %s", e2)
-            return "⏸️ Playback paused."
+            st = await ctx.lr.status()
+            if st is not None and not st.get("username"):
+                await set_audio_mute(False)
+                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        except Exception as e:
+            log.debug("status check before pause: %s", e)
+        try:
+            await asyncio.wait_for(ctx.lr.pause(), timeout=8.0)
+        except Exception as e:
+            log.warning("pause failed, trying playpause fallback: %s", e)
+            try:
+                await asyncio.wait_for(ctx.lr.playpause(), timeout=8.0)
+            except Exception as e2:
+                log.exception("pause and playpause failed: %s", e2)
+        GUARD.mark_state(ACTION_PAUSE)
+        return "⏸️ Playback paused."
 
 @command("stop")
 async def stop(ctx, arg):
+    allowed, reason = GUARD.can_toggle_state(ACTION_STOP, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
     # Instantly mute PulseAudio capture/sink for immediate silence
     await set_audio_mute(True)
-    try:
-        st = await ctx.lr.status()
-        if st is not None and not st.get("username"):
-            await set_audio_mute(False)
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-    except Exception as e:
-        log.debug("status check before stop: %s", e)
-    try:
-        await ctx.lr.pause()
-    except Exception as e:
-        log.warning("pause during stop failed: %s", e)
-    return "⏹️ Playback stopped."
+
+    async with GUARD.lock:
+        try:
+            st = await ctx.lr.status()
+            if st is not None and not st.get("username"):
+                await set_audio_mute(False)
+                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+        except Exception as e:
+            log.debug("status check before stop: %s", e)
+        try:
+            await asyncio.wait_for(ctx.lr.pause(), timeout=8.0)
+        except Exception as e:
+            log.warning("pause during stop failed: %s", e)
+        GUARD.mark_state(ACTION_STOP)
+        return "⏹️ Playback stopped."
 
 @command("resume", "r")
 async def resume(ctx, arg):
-    await set_audio_mute(False)
-    try:
-        st = await ctx.lr.status()
-        if st is not None and not st.get("username"):
-            return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
-        if st and not st.get("paused") and not st.get("stopped"):
-            return "Already playing."
-    except Exception as e:
-        log.debug("status check before resume: %s", e)
-    try:
-        await ctx.lr.resume()
-        return "▶️ Playback resumed."
-    except Exception:
-        return (
-            "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
-            f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
-        )
+    allowed, reason = GUARD.can_toggle_state(ACTION_PLAY, is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
 
-_last_skip_time = 0.0
+    async with GUARD.lock:
+        try:
+            st = await ctx.lr.status()
+            if st is not None and not st.get("username"):
+                return f"⚠️ Spotify is not connected. Type [b]{ctx.cfg.prefix}login[/b] in chat to link an account!"
+            if st and not st.get("paused") and not st.get("stopped"):
+                return "Already playing."
+        except Exception as e:
+            log.debug("status check before resume: %s", e)
+
+        await set_audio_mute(False)
+        try:
+            await asyncio.wait_for(ctx.lr.resume(), timeout=10.0)
+            GUARD.mark_state(ACTION_PLAY)
+            return "▶️ Playback resumed."
+        except asyncio.TimeoutError:
+            return "⏳ Resume timed out. Spotify may still be connecting."
+        except Exception:
+            return (
+                "⚠️ [b]Resume Failed:[/b] Spotify was unable to resume playback.\n"
+                f"Check if your Premium subscription is active or type [b]{ctx.cfg.prefix}login[/b] to re-link."
+            )
 
 @command("skip", "next", "s")
 async def skip(ctx, arg):
-    global _last_skip_time
-    now = time.time()
-    if now - _last_skip_time < 1.5:
-        return "⏳ Skip already in progress..."
-    _last_skip_time = now
-    await set_audio_mute(False)
-    try:
-        await ctx.lr.next()
-        return "⏭️ Skipped to next track."
-    except Exception as e:
-        log.warning("skip failed: %s", e)
-        return "⚠️ Unable to skip right now. The track may still be loading."
+    allowed, reason = GUARD.can_skip(is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    async with GUARD.lock:
+        GUARD.mark_skip()
+        await set_audio_mute(False)
+        try:
+            await asyncio.wait_for(ctx.lr.next(), timeout=12.0)
+            return "⏭️ Skipped to next track."
+        except asyncio.TimeoutError:
+            return "⏳ Skip timed out. The next track may still be buffering."
+        except Exception as e:
+            log.warning("skip failed: %s", e)
+            return "⚠️ Unable to skip right now. The track may still be loading."
 
 @command("prev", "back")
 async def prev(ctx, arg):
-    await set_audio_mute(False)
-    try:
-        await ctx.lr.prev()
-        return "⏮️ Returned to previous track."
-    except Exception as e:
-        log.warning("prev failed: %s", e)
-        return "⚠️ Unable to return to previous track."
+    allowed, reason = GUARD.can_skip(is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    async with GUARD.lock:
+        GUARD.mark_skip()
+        await set_audio_mute(False)
+        try:
+            await asyncio.wait_for(ctx.lr.prev(), timeout=12.0)
+            return "⏮️ Returned to previous track."
+        except asyncio.TimeoutError:
+            return "⏳ Returning to previous track timed out."
+        except Exception as e:
+            log.warning("prev failed: %s", e)
+            return "⚠️ Unable to return to previous track."
 
 @command("vol", "volume", "v")
 async def vol(ctx, arg):
+    if not arg:
+        if GUARD.last_volume is not None:
+            return f"Current volume: {GUARD.last_volume}%"
+        try:
+            st = await ctx.lr.status()
+            if st and "volume" in st:
+                GUARD.last_volume = st["volume"]
+                return f"Current volume: {st['volume']}%"
+        except Exception:
+            pass
+        return f"Usage: {ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>"
+
     try:
-        v = max(0, min(int(arg), ctx.cfg.max_volume))
+        target_vol = int(arg)
     except ValueError:
-        return f"Usage: vol <0-{ctx.cfg.max_volume}>"
-    await ctx.lr.volume(v)
-    return f"Volume: {v}"
+        return f"Usage: {ctx.cfg.prefix}vol <0-{ctx.cfg.max_volume}>"
+
+    target_vol = max(0, min(target_vol, ctx.cfg.max_volume))
+
+    if GUARD.last_volume is not None and target_vol == GUARD.last_volume:
+        return f"Volume is already {target_vol}%."
+
+    allowed, reason = GUARD.can_adjust_volume(is_admin=ctx.is_admin)
+    if not allowed:
+        return reason
+
+    async with GUARD.lock:
+        try:
+            await asyncio.wait_for(ctx.lr.volume(target_vol), timeout=5.0)
+            GUARD.mark_volume(target_vol)
+            return f"Volume set to: {target_vol}%"
+        except asyncio.TimeoutError:
+            return "⏳ Volume update timed out. Please try again."
+        except Exception as e:
+            log.warning("Volume change failed: %s", e)
+            return "⚠️ Unable to change volume right now."
 
 @command("np", "now")
 async def np(ctx, arg):

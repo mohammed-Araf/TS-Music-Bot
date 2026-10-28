@@ -6,6 +6,7 @@ from .clientquery import ClientQuery, QueryError
 from .spotify import Librespot, Search
 from .tsescape import strip_bbcode
 from .commands import REGISTRY, Ctx
+from .ratelimit import RateLimiter
 
 log = logging.getLogger("app")
 
@@ -17,7 +18,7 @@ class App:
         self.search = None
         self.my_clid = None
         self.my_cid = None
-        self.last_cmd = {}          # uid -> timestamp (rate limit)
+        self.limiter = RateLimiter(user_cooldown=CFG.cooldown)
         self.ts_ok = False
         self.spotify_ok = False
 
@@ -66,8 +67,10 @@ class App:
             await self.cq.say(self.my_cid, "You need the music role to use this bot.")
             return
 
-        now = time.time()
-        if now - self.last_cmd.get(uid, 0) < CFG.cooldown:
+        allowed, reason = self.limiter.check(uid, is_admin=is_admin)
+        if not allowed:
+            if reason:
+                await self.cq.say(self.my_cid, reason)
             return
         ctx = Ctx(CFG, self.cq, self.lr, self.search, uid, nick, self.my_cid,
                   server_groups=user_groups, channel_group=ch_group, is_admin=is_admin, cmd=cmd_lower)

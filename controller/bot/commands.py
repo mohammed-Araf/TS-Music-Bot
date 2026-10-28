@@ -1,10 +1,24 @@
-import os, asyncio, subprocess, logging
-from .spotify import to_uri
+import os, json, time, asyncio, subprocess, logging
+from .spotify import to_uri, SpotifyRateLimitError, SpotifyAuthError
 
 log = logging.getLogger("commands")
 
 REGISTRY = {}   # name -> (handler, admin_only)
 _pairing_task = None
+_keys_wizard = {}  # { "uid": str, "step": str, "client_id": str, "time": float }
+
+KEYS_FILE = "/data/spotify_keys.json"
+
+def save_custom_keys(client_id, client_secret):
+    with open(KEYS_FILE, "w") as f:
+        json.dump({"client_id": client_id, "client_secret": client_secret}, f)
+
+def remove_custom_keys():
+    if os.path.exists(KEYS_FILE):
+        try:
+            os.remove(KEYS_FILE)
+        except Exception:
+            pass
 
 def command(name, *aliases, admin=False):
     def deco(fn):
@@ -42,7 +56,21 @@ async def play(ctx, arg):
         return "Resumed."
     uri, label = to_uri(arg), arg
     if not uri:
-        hits = await ctx.search.tracks(arg, limit=1)
+        try:
+            hits = await ctx.search.tracks(arg, limit=1)
+        except SpotifyRateLimitError:
+            return (
+                "⚠️ [b]Spotify Search Rate Limit Reached![/b]\n"
+                "• The shared search key has reached its request limit for now.\n"
+                "• You can still paste [b]direct Spotify song or playlist links[/b] to play with zero limits!\n"
+                f"• Or type [b]{ctx.cfg.prefix}spotifykeys[/b] for a 1-minute step-by-step guide to add your own free key."
+            )
+        except SpotifyAuthError:
+            return (
+                "⚠️ [b]Spotify Search Error:[/b] Search credentials are invalid or not configured.\n"
+                "• Paste a [b]direct Spotify song/playlist link[/b] to play immediately, or\n"
+                f"• Type [b]{ctx.cfg.prefix}spotifykeys[/b] to set up free search keys step-by-step!"
+            )
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
@@ -62,7 +90,21 @@ async def queue(ctx, arg):
         return f"Usage: {ctx.cfg.prefix}queue <song name or Spotify link>"
     uri, label = to_uri(arg), arg
     if not uri:
-        hits = await ctx.search.tracks(arg, limit=1)
+        try:
+            hits = await ctx.search.tracks(arg, limit=1)
+        except SpotifyRateLimitError:
+            return (
+                "⚠️ [b]Spotify Search Rate Limit Reached![/b]\n"
+                "• The shared search key has reached its request limit for now.\n"
+                "• You can still paste [b]direct Spotify song or playlist links[/b] to play with zero limits!\n"
+                f"• Or type [b]{ctx.cfg.prefix}spotifykeys[/b] for a 1-minute step-by-step guide to add your own free key."
+            )
+        except SpotifyAuthError:
+            return (
+                "⚠️ [b]Spotify Search Error:[/b] Search credentials are invalid or not configured.\n"
+                "• Paste a [b]direct Spotify song/playlist link[/b] to play immediately, or\n"
+                f"• Type [b]{ctx.cfg.prefix}spotifykeys[/b] to set up free search keys step-by-step!"
+            )
         if not hits:
             return "Nothing found."
         uri, label = hits[0]["uri"], f'{hits[0]["name"]} - {hits[0]["artists"]}'
@@ -125,7 +167,7 @@ async def myroles(ctx, arg):
     groups = ", ".join(sorted(ctx.server_groups)) if ctx.server_groups else "none"
     return f"{ctx.nick} | UID: {ctx.uid} | Server Groups: [{groups}] | Channel Group: {ctx.channel_group or 'none'}"
 
-# ---------------- spotify auth commands ----------------
+# ---------------- spotify auth & keys ----------------
 async def _poll_for_pairing(ctx, timeout=300):
     start = asyncio.get_event_loop().time()
     while asyncio.get_event_loop().time() - start < timeout:
@@ -213,6 +255,136 @@ async def logout(ctx, arg):
     _supervisor("restart", "go-librespot")
     return f"Spotify unlinked. To connect a new account, type [b]{ctx.cfg.prefix}login[/b]."
 
+@command("spotifykeys", "keys", "setkeys")
+async def spotifykeys(ctx, arg):
+    global _keys_wizard
+    p = ctx.cfg.prefix
+    sub = arg.strip()
+    now = time.time()
+
+    # Cancel command
+    if sub.lower() in ("cancel", "stop", "abort"):
+        _keys_wizard = {}
+        return "❌ Spotify keys setup cancelled."
+
+    # Reset command
+    if sub.lower() in ("reset", "default"):
+        remove_custom_keys()
+        ctx.search.set_credentials(ctx.cfg.sp_client_id, ctx.cfg.sp_client_secret)
+        _keys_wizard = {}
+        return "🔄 Reverted to the default built-in Spotify search credentials."
+
+    # Direct 2-arg mode: !spotifykeys <client_id> <client_secret>
+    parts = sub.split()
+    if len(parts) == 2 and not any(parts[0].lower() == kw for kw in ("ready", "id", "secret")):
+        cid, secret = parts[0].strip(), parts[1].strip()
+        try:
+            await ctx.search.verify(cid, secret)
+        except SpotifyAuthError as e:
+            return f"❌ Verification Failed: {e}"
+        except SpotifyRateLimitError:
+            return "⚠️ Rate limit reached during verification. Please wait a moment and try again."
+        save_custom_keys(cid, secret)
+        ctx.search.set_credentials(cid, secret)
+        _keys_wizard = {}
+        return "✅ [b]Success![/b] Your custom Spotify Search keys were verified and activated!"
+
+    # Expire wizard session after 10 minutes
+    wizard = _keys_wizard
+    if wizard and now - wizard.get("time", 0) > 600:
+        wizard = _keys_wizard = {}
+
+    current_step = wizard.get("step") if wizard else None
+
+    # Step 1: Initial call without args or starting over
+    if not current_step or sub.lower() in ("start", "new", "begin") or (not sub and current_step == "ready"):
+        _keys_wizard = {
+            "uid": ctx.uid,
+            "step": "ready",
+            "client_id": None,
+            "time": now
+        }
+        return (
+            "🔑 [b]Step 1/3: Get your free Spotify Developer Keys[/b]\n"
+            "1. Open [url]https://developer.spotify.com/dashboard[/url] in your browser.\n"
+            "2. Log in with any free Spotify account & click [b]'Create App'[/b].\n"
+            "3. Enter any App name (e.g. 'MyBot'), select 'Web API', and click Save.\n"
+            "4. Click [b]'Settings'[/b] to see your Client ID and Client Secret.\n\n"
+            f"👉 When you have that page open, reply with: [b]{p}spotifykeys ready[/b]\n"
+            f"(Or type [b]{p}spotifykeys cancel[/b] to abort)"
+        )
+
+    # Step 2: User says ready -> prompt for Client ID
+    if current_step == "ready" and sub.lower() == "ready":
+        _keys_wizard["step"] = "client_id"
+        _keys_wizard["time"] = now
+        return (
+            "🔑 [b]Step 2/3: Enter your Client ID[/b]\n"
+            "On your Spotify Dashboard Settings, copy your [b]Client ID[/b] (32-character code).\n\n"
+            f"👉 Reply with: [b]{p}spotifykeys <YOUR_CLIENT_ID>[/b]\n"
+            f"(Example: {p}spotifykeys 4c1a8e7b92f0...)"
+        )
+
+    # Step 2: User submits Client ID
+    if current_step == "client_id":
+        cid = sub
+        if cid.lower().startswith("id "):
+            cid = cid[3:].strip()
+        if len(cid) < 16 or " " in cid:
+            return (
+                "⚠️ That doesn't look like a valid Client ID (should be ~32 alphanumeric characters with no spaces).\n"
+                f"Please copy the Client ID from developer.spotify.com and reply:\n"
+                f"👉 [b]{p}spotifykeys <YOUR_CLIENT_ID>[/b]"
+            )
+        _keys_wizard["client_id"] = cid
+        _keys_wizard["step"] = "client_secret"
+        _keys_wizard["time"] = now
+        return (
+            "🔑 [b]Step 3/3: Enter your Client Secret[/b]\n"
+            f"Client ID received: [b]{cid[:6]}...{cid[-4:]}[/b]\n"
+            "Now on Spotify Dashboard Settings, click [b]'View client secret'[/b] and copy it.\n\n"
+            f"👉 Reply with: [b]{p}spotifykeys <YOUR_CLIENT_SECRET>[/b]"
+        )
+
+    # Step 3: User submits Client Secret -> verify and activate
+    if current_step == "client_secret":
+        secret = sub
+        if secret.lower().startswith("secret "):
+            secret = secret[7:].strip()
+        if len(secret) < 16 or " " in secret:
+            return (
+                "⚠️ That doesn't look like a valid Client Secret (should be ~32 alphanumeric characters with no spaces).\n"
+                f"Please copy the Client Secret from developer.spotify.com and reply:\n"
+                f"👉 [b]{p}spotifykeys <YOUR_CLIENT_SECRET>[/b]"
+            )
+        cid = _keys_wizard.get("client_id")
+        if not cid:
+            _keys_wizard["step"] = "client_id"
+            return f"⚠️ Missing Client ID. Please start Step 2 again: [b]{p}spotifykeys <CLIENT_ID>[/b]"
+
+        # Live verification with Spotify Web API
+        try:
+            await ctx.search.verify(cid, secret)
+        except SpotifyAuthError:
+            return (
+                "❌ [b]Verification Failed:[/b] Spotify rejected these credentials (invalid Client ID or Secret).\n"
+                "Please double check your keys on developer.spotify.com and try pasting the secret again:\n"
+                f"👉 [b]{p}spotifykeys <YOUR_CLIENT_SECRET>[/b]\n"
+                f"(Or type [b]{p}spotifykeys cancel[/b] to abort)"
+            )
+        except SpotifyRateLimitError:
+            return "⚠️ Spotify rate limit reached during verification. Please wait a few seconds and try again."
+
+        save_custom_keys(cid, secret)
+        ctx.search.set_credentials(cid, secret)
+        _keys_wizard = {}
+        return (
+            "✅ [b]Success! Spotify Search Keys Verified & Activated![/b]\n"
+            "Your custom developer credentials have been saved. You can now search and play songs anytime (e.g. !play Bohemian Rhapsody) with your own dedicated quota!"
+        )
+
+    return f"Type [b]{p}spotifykeys[/b] to start the setup guide, or [b]{p}spotifykeys cancel[/b] to exit."
+
 # ---------------- bot control (admin) ----------------
 @command("restart", admin=True)
 async def restart(ctx, arg):
@@ -249,5 +421,5 @@ async def status(ctx, arg):
 async def help_(ctx, arg):
     p = ctx.cfg.prefix
     return (f"{p}play <name|link>, {p}queue <name|link>, {p}pause, {p}resume, {p}skip, "
-            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}login, {p}myroles | "
+            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}login, {p}spotifykeys, {p}myroles | "
             f"admin: {p}logout, {p}restart, {p}reconnect, {p}audio, {p}status")

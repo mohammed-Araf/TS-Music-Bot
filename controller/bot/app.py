@@ -1,4 +1,4 @@
-import asyncio, logging, time
+import os, json, asyncio, logging, time
 import aiohttp
 from aiohttp import web
 from .config import CFG
@@ -156,7 +156,16 @@ class App:
     async def run(self):
         self.session = aiohttp.ClientSession()
         self.lr = Librespot(CFG.lr_url, self.session)
-        self.search = Search(CFG.sp_client_id, CFG.sp_client_secret, self.session)
+        custom_keys = None
+        if os.path.exists("/data/spotify_keys.json"):
+            try:
+                with open("/data/spotify_keys.json") as f:
+                    custom_keys = json.load(f)
+            except Exception:
+                pass
+        cid = (custom_keys.get("client_id") if custom_keys else None) or CFG.sp_client_id
+        secret = (custom_keys.get("client_secret") if custom_keys else None) or CFG.sp_client_secret
+        self.search = Search(cid, secret, self.session)
 
         app = web.Application()
         app.router.add_get("/health", self.health)

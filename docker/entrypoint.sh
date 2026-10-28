@@ -19,8 +19,8 @@ if [ "$SETUP_MODE" = "1" ]; then
   export SETUP_AUTOSTART=true
 else
   : "${TS_CLIENTQUERY_APIKEY:?TS_CLIENTQUERY_APIKEY is required (see setup)}"
-  : "${SPOTIFY_CLIENT_ID:?SPOTIFY_CLIENT_ID is required}"
-  : "${SPOTIFY_CLIENT_SECRET:?SPOTIFY_CLIENT_SECRET is required}"
+  export SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}"
+  export SPOTIFY_CLIENT_SECRET="${SPOTIFY_CLIENT_SECRET:-}"
   export CONTROLLER_AUTOSTART=true
   export SETUP_AUTOSTART=false
 fi

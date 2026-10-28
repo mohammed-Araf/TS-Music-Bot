@@ -139,6 +139,7 @@ All commands use the prefix defined in `.env.common` (default `!`):
 | `!vol <0-80>` (or `!v`) | Everyone / Allowed Role | Adjust volume (clamped to `MAX_VOLUME`). |
 | `!np` | Everyone / Allowed Role | Show currently playing song title and artist. |
 | `!login` (or `!pair`) | Allowed Role / Admin | Pair a Spotify Premium account directly via `spotify.com/pair` link. |
+| `!spotifykeys` | Allowed Role / Admin | Step-by-step wizard to set or update your own free Spotify Search keys. |
 | `!myroles` | Everyone | View your current UID, Server Group IDs, and Channel Group ID. |
 | `!help` | Everyone | Show list of available commands. |
 | `!logout` | Admin | Unlink currently paired Spotify account. |
@@ -157,6 +158,17 @@ No VNC, terminal access, or SSH port forwarding is required to link or switch Sp
 5. Within seconds, the bot automatically links and announces in chat:
    `✅ Spotify Connected! Successfully paired as <username>. Ready to play music!`
 6. If your subscription ever expires or you want to switch accounts, anyone with the music role can type `!login` (or an admin can type `!login force` or `!logout`).
+
+### 🔑 Step-by-Step Spotify Search Keys Wizard (`!spotifykeys`)
+
+By default, the bot includes a shared search key so you can search songs (`!play song name`) immediately without signing up for anything.
+- If the shared key ever reaches Spotify's rate limit, you can always paste **direct Spotify song/playlist links** with zero restrictions.
+- Or, you can connect your own free developer keys right from TeamSpeak chat in 3 simple steps:
+  1. Type **`!spotifykeys`** in chat. The bot gives you a link to `developer.spotify.com/dashboard`.
+  2. Reply **`!spotifykeys ready`** when you have created an app.
+  3. Paste your **Client ID**, then paste your **Client Secret**.
+  4. The bot automatically tests and verifies the credentials with Spotify, saves them permanently, and activates your dedicated quota!
+  *(To revert to the built-in default keys anytime, simply type `!spotifykeys reset`).*
 
 ### Role-Based Access Control (RBAC)
 

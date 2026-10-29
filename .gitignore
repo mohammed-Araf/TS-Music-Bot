@@ -38,5 +38,8 @@ venv/
 # Logs
 *.log
 
+# Scripts / diagnostic tools
+scripts/
+
 # TS3 Plugin archives
 *.ts3_plugin

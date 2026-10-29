@@ -24,7 +24,10 @@ You can run this bot directly on your everyday PC or laptop for gaming sessions,
 | **Disk Space** | 2 GB free disk space | 3 GB free disk space |
 | **Network** | Stable broadband internet | Any VPS with public internet access |
 | **Software** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Docker & Docker Compose (auto-installed by `install.sh`!) |
-| **Accounts** | 1x Spotify Premium Account | 1x Spotify Premium Account |
+| **Accounts** | 1x Spotify Premium Account (Older / Established)* | 1x Spotify Premium Account (Older / Established)* |
+
+> [!IMPORTANT]
+> **\*Spotify Account Compatibility:** Older/grandfathered Spotify Premium accounts work seamlessly. Recently created accounts or accounts migrated by Spotify to proprietary **PlayPlay DRM** will encounter Spotify's server-side `code 1` key refusal. See the [Spotify Account Compatibility & Code 1 Notice](#️-spotify-account-compatibility--code-1-error-notice) below for details.
 
 > [!TIP]
 > **Audio Quality:** Set your TeamSpeak music channel's audio codec to **Opus Music** with quality set to **10** (in Channel Edit Settings) for crystal-clear 320kbps streaming!
@@ -210,6 +213,7 @@ All commands use the prefix defined in `.env.common` (default `!`):
 | `!duck` | Everyone / Allowed Role | Toggle conversational voice ducking on/off. |
 | `!np` | Everyone / Allowed Role | Show currently playing song title and artist. |
 | `!login` (or `!pair`) | Allowed Role / Admin | Pair a Spotify Premium account directly via `spotify.com/pair` link. |
+| `!login force` | Admin | Force-generate a brand-new pairing URL and invalidate old device tokens. |
 | `!spotifykeys` | Allowed Role / Admin | Step-by-step wizard to connect custom free Spotify search keys. |
 | `!myroles` | Everyone | View your current UID, Server Group IDs, and Channel Group ID. |
 | `!help` | Everyone | Show list of available commands. |
@@ -278,13 +282,119 @@ ADMIN_UIDS=e8Y8...=
 
 ---
 
-## 👥 Scaling: Adding More Bots
+## ⚠️ Spotify Account Compatibility & "Code 1" Error Notice
 
-Running multiple bots is as simple as:
+### What is the "Code 1" (AesKeyError) Issue?
+When connecting Spotify to open-source streaming engines (`go-librespot` / `librespot`), you may encounter this behavior on certain Spotify accounts:
+- The bot successfully pairs via `spotify.com/pair`.
+- In TeamSpeak, it announces `✅ Spotify Connected!`.
+- In the Spotify mobile/desktop app, the bot appears under "Connect to a device".
+- **However:** As soon as playback starts, the player skips ~50 songs in rapid succession, halts, and the progress scrubber stays frozen at `0:00` with no audio playing.
 
+Inspecting container logs reveals:
+```text
+level=warning msg="skipping track: Spotify refused the audio key (code 1) for this playback context"
+error="failed retrieving audio key: failed retrieving aes key with code 1"
+level=warning msg="stopping after 51 consecutive unplayable tracks"
+```
+
+### Why Does This Happen?
+This is a **known, server-side Spotify restriction** tracked globally across the open-source community (*librespot* #1649 / #1735, *ncspot*, *Music Assistant*):
+1. **Server-Side DRM Rollout:** Spotify is progressively deprecating the legacy raw AES key exchange protocol and enforcing proprietary closed-source **PlayPlay DRM** on newly created accounts and specific regional tiers.
+2. **Older vs. Newer Accounts:**
+   - **Established / Older Accounts:** Spotify's servers still grant legacy raw AES audio decryption keys, allowing the bot to stream flawlessly.
+   - **Newer Accounts:** Spotify's servers authenticate the account, but outright refuse (`code 1`) to hand over the raw AES decryption keys needed by open-source clients to decode audio.
+3. **Spotify Developer Apps:** Creating an app on `developer.spotify.com` grants Web REST API access for metadata/search, but **does not bypass** Access Point audio stream DRM.
+
+### Recommended Workarounds:
+- **Use an Older / Established Account:** If you have access to a personal account created a few years ago, use that account for Spotify Connect streaming.
+- **Universal Multi-Bot Audio Engine (Roadmap):** For environments requiring multiple bots or accounts affected by DRM, see the multi-bot section below for running independent streams without Spotify account restrictions.
+
+---
+
+## 👥 Scaling: Adding More Bots & Multi-Stream Limits
+
+### Spotify's 1-Stream-Per-Account Limit
+Spotify strictly enforces a **single active audio stream per account** across all devices. If you run multiple bots:
+- Two bots **cannot** play different songs simultaneously using the same Spotify account.
+- In a pure Spotify Connect setup, each bot container requires its own separate grandfathered Spotify Premium account.
+
+### How to Run Multiple Bots:
 1. Copy `bots/bot1.example.env` to `bots/bot2.env` with a unique `TS_NICK` and `SPOTIFY_DEVICE_NAME`.
 2. Uncomment or add the `bot2` service in `docker-compose.yml`.
-3. Launch with `docker compose up -d bot2` and type `!login` in chat to pair its Spotify account!
+3. Launch with `docker compose up -d bot2`.
+4. Join the second bot's channel and type `!login` in chat to pair its dedicated Spotify account!
+
+*(Note: We are actively developing a Universal Streaming fallback engine using direct audio pipelines to enable unlimited simultaneous bots across channels without requiring separate Spotify accounts).*
+
+---
+
+## 📢 TeamSpeak Channel Description Template (Ready to Copy)
+
+Want other users on your server to know how to use the music bot? Copy and paste this formatted BBCode template directly into your channel's **Edit Channel > Description** box:
+
+```bbcode
+[center]
+[size=14][b]🎵 [color=#1DB954]TeamSpeak 3 Spotify Music Bot[/color] 🎵[/b][/size]
+[size=10][i]High-Fidelity 320kbps Audio • Spotify Connect • Conversational Voice Ducking[/i][/size]
+[/center]
+
+[hr]
+
+[b]🎮 [color=#007acc]QUICK COMMANDS CHEATSHEET[/color][/b]
+[table]
+[tr]
+[th][b]Command[/b][/th]
+[th][b]Description[/b][/th]
+[/tr]
+[tr]
+[td][b]!play <name | link>[/b] (or [b]!p[/b])[/td]
+[td]Play any song, artist, album, or Spotify link[/td]
+[/tr]
+[tr]
+[td][b]!queue <name | link>[/b] (or [b]!q[/b])[/td]
+[td]Add track or playlist to the playback queue[/td]
+[/tr]
+[tr]
+[td][b]!pause[/b] / [b]!resume[/b] (or [b]!r[/b])[/td]
+[td]Pause or resume current playback[/td]
+[/tr]
+[tr]
+[td][b]!skip[/b] (or [b]!s[/b])[/td]
+[td]Skip to the next song in queue[/td]
+[/tr]
+[tr]
+[td][b]!vol <0-80>[/b] (or [b]!v[/b])[/td]
+[td]Change music volume (Default: 40%)[/td]
+[/tr]
+[tr]
+[td][b]!duck[/b][/td]
+[td]Toggle voice ducking (lowers music when speaking)[/td]
+[/tr]
+[tr]
+[td][b]!np[/b][/td]
+[td]Show currently playing song & artist[/td]
+[/tr]
+[tr]
+[td][b]!stop[/b][/td]
+[td]Stop music and return to ambient chill lo-fi beats[/td]
+[/tr]
+[/table]
+
+[hr]
+
+[b]📱 [color=#1DB954]SPOTIFY CONNECT CONTROL[/color][/b]
+• You can control the bot directly from your Spotify mobile or desktop app!
+• Open Spotify > Tap [b]Devices Available[/b] > Select [b]RageBot[/b].
+• Any track or playlist you play will stream directly into this channel in real time!
+
+[hr]
+
+[b]💡 [color=#e67e22]TIPS & AUDIO SETTINGS[/color][/b]
+• [b]Auto Voice Ducking:[/b] Music smoothly dips when someone talks and restores naturally.
+• [b]Ambient BGM:[/b] When idle, relaxing lo-fi background beats play at a comfortable 20% volume.
+• [b]Optimal Audio Quality:[/b] Channel codec is tuned to [b]Opus Music (Quality 10)[/b] for 320kbps fidelity.
+```
 
 ---
 

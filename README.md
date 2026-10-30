@@ -27,10 +27,37 @@ You can run this bot directly on your everyday PC or laptop for gaming sessions,
 | **Accounts** | 1x Spotify Premium Account (Older / Established)* | 1x Spotify Premium Account (Older / Established)* |
 
 > [!IMPORTANT]
-> **\*Spotify Account Compatibility:** Older/grandfathered Spotify Premium accounts work seamlessly. Recently created accounts or accounts migrated by Spotify to proprietary **PlayPlay DRM** will encounter Spotify's server-side `code 1` key refusal. See the [Spotify Account Compatibility & Code 1 Notice](#️-spotify-account-compatibility--code-1-error-notice) below for details.
+> **\*Spotify Account Compatibility:** Older/grandfathered Spotify Premium accounts work seamlessly. Recently created accounts or accounts migrated by Spotify to proprietary **PlayPlay DRM** will encounter Spotify's server-side `code 1` key refusal. Run the [10-Second Compatibility Check](#-step-0-check-your-spotify-account-compatibility-10-second-test) below before setting up!
 
 > [!TIP]
 > **Audio Quality:** Set your TeamSpeak music channel's audio codec to **Opus Music** with quality set to **10** (in Channel Edit Settings) for crystal-clear 320kbps streaming!
+
+---
+
+## ⚡ Step 0: Check Your Spotify Account Compatibility (10-Second Test)
+
+Before setting up Docker, TeamSpeak, or VPS hosting, **test if your Spotify account is compatible in just 10 seconds** without installing any software or dependencies!
+
+Run this single command in your terminal:
+
+### 🍎 Linux & macOS:
+```bash
+curl -sSL https://raw.githubusercontent.com/mohammed-Araf/TS-Music-Bot/main/check_spotify.py | python3
+```
+
+### 🪟 Windows (PowerShell):
+```powershell
+irm https://raw.githubusercontent.com/mohammed-Araf/TS-Music-Bot/main/check_spotify.py | python
+```
+
+*(Or if you have already cloned the repository, simply run `python3 check_spotify.py`)*
+
+### 🔍 How it Works:
+1. It automatically opens `https://spotify.com/pair` in your default browser.
+2. Log in to your Spotify account and click **Pair**.
+3. The script immediately tests Spotify Access Point's raw AES decryption key:
+   - ✅ **Result: ACCOUNT 100% COMPATIBLE!** — Your account is free of DRM restrictions. Proceed to setup below!
+   - ❌ **Result: ACCOUNT RESTRICTED (Code 1)** — Spotify refused the audio key. This account cannot be used with open-source Spotify Connect bots; try an older account or use the Universal Audio Engine.
 
 ---
 

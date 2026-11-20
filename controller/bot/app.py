@@ -41,6 +41,7 @@ class App:
         # and no events arrive, so the channel never looks empty and BGM loops forever.
         self._ts_last_write_ok: float = time.time()
         self._ts_healing: bool = False
+        self._ts_last_heal: float = 0.0
         self._empty_away_msg: str = ""
 
     async def _cq_update(self, cmd: str):
@@ -49,11 +50,18 @@ class App:
             await self.cq.cmd(cmd)
             self._ts_last_write_ok = time.time()
         except QueryError as e:
-            if (CFG.ts_zombie_timeout > 0 and "id=1796" in str(e)
-                    and time.time() - self._ts_last_write_ok > CFG.ts_zombie_timeout):
-                asyncio.create_task(self.heal_ts_connection(
-                    f"server writes refused for {time.time() - self._ts_last_write_ok:.0f}s"))
+            if "id=1796" in str(e):
+                self._maybe_auto_heal(f"server writes refused for {time.time() - self._ts_last_write_ok:.0f}s")
             raise
+
+    def _maybe_auto_heal(self, reason: str):
+        """Auto-restart the TS client once the link has been bad for ts_zombie_timeout,
+        at most once every 5 minutes (rapid reconnects can trip server anti-flood)."""
+        now = time.time()
+        if (CFG.ts_zombie_timeout > 0
+                and now - self._ts_last_write_ok > CFG.ts_zombie_timeout
+                and now - self._ts_last_heal > 300):
+            asyncio.create_task(self.heal_ts_connection(reason))
 
     async def heal_ts_connection(self, reason: str):
         """Stop audio, forget the stale channel cache and restart the TS3 client."""
@@ -73,11 +81,18 @@ class App:
             self._paused_by_empty_channel = False
             self._empty_channel_time = None
             self.ts_ok = False
-            r = await asyncio.to_thread(
-                subprocess.run,
-                ["supervisorctl", "-c", "/opt/bot/docker/supervisord.conf", "restart", "ts3client"],
-                capture_output=True, text=True, timeout=60,
-            )
+            # ts3client_runscript.sh runs the binary as a child (no exec), so a plain
+            # supervisorctl restart only kills the wrapper and leaves the old binary
+            # orphaned, still holding the ClientQuery port. Kill the binary explicitly.
+            def _restart():
+                sv = ["supervisorctl", "-c", "/opt/bot/docker/supervisord.conf"]
+                subprocess.run(sv + ["stop", "ts3client"], capture_output=True, timeout=60)
+                subprocess.run(["pkill", "-f", "ts3client_linux_amd64"], capture_output=True, timeout=10)
+                time.sleep(2)
+                subprocess.run(["pkill", "-9", "-f", "ts3client_linux_amd64"], capture_output=True, timeout=10)
+                return subprocess.run(sv + ["start", "ts3client"], capture_output=True, text=True, timeout=60)
+            self._ts_last_heal = time.time()
+            r = await asyncio.to_thread(_restart)
             log.info("ts3client restart: rc=%s %s", r.returncode, (r.stdout or r.stderr).strip())
             if self.cq:
                 await self.cq.close()   # ts_loop reconnects ClientQuery once the client is back
@@ -457,8 +472,12 @@ class App:
                 if self.ts_ok:
                     await self._ensure_channel()
                     await self._sync_channel_clients()
-            except (QueryError, asyncio.TimeoutError):
+            except (QueryError, asyncio.TimeoutError) as e:
                 self.ts_ok = False
+                # The client never auto-reconnects after a server drop (autoreconnect=0),
+                # so a lasting "not connected" needs a restart too.
+                if "id=1794" in str(e):
+                    self._maybe_auto_heal("TS client not connected to server")
             await asyncio.sleep(5)
 
     async def ts_loop(self):

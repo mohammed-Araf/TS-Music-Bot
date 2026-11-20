@@ -1,4 +1,4 @@
-import os, json, asyncio, logging, time
+import os, json, asyncio, logging, time, subprocess
 import aiohttp
 from aiohttp import web
 from .config import CFG
@@ -35,6 +35,56 @@ class App:
         self._ready_for_ambient_autoplay: bool = False
         self.is_ambient_autoplay: bool = False
         self.user_volume: int = CFG.initial_volume
+        # Zombie-connection watchdog: the TS3 client can silently lose its server
+        # link while ClientQuery keeps answering reads from a frozen cache (whoami,
+        # channelclientlist). Writes then fail with id=1796 "currently not possible"
+        # and no events arrive, so the channel never looks empty and BGM loops forever.
+        self._ts_last_write_ok: float = time.time()
+        self._ts_healing: bool = False
+        self._empty_away_msg: str = ""
+
+    async def _cq_update(self, cmd: str):
+        """Run a server-bound ClientQuery write and feed the zombie watchdog."""
+        try:
+            await self.cq.cmd(cmd)
+            self._ts_last_write_ok = time.time()
+        except QueryError as e:
+            if "id=1796" in str(e) and time.time() - self._ts_last_write_ok > CFG.ts_zombie_timeout:
+                asyncio.create_task(self.heal_ts_connection(
+                    f"server writes refused for {time.time() - self._ts_last_write_ok:.0f}s"))
+            raise
+
+    async def heal_ts_connection(self, reason: str):
+        """Stop audio, forget the stale channel cache and restart the TS3 client."""
+        if self._ts_healing:
+            return
+        self._ts_healing = True
+        try:
+            log.warning("TeamSpeak connection looks dead (%s). Pausing audio and restarting ts3client.", reason)
+            try:
+                await self.lr.pause()
+            except Exception:
+                pass
+            await set_audio_mute(True)
+            self.channel_clients.clear()
+            self.speaking_clients.clear()
+            self.is_ambient_autoplay = False
+            self._paused_by_empty_channel = False
+            self._empty_channel_time = None
+            self.ts_ok = False
+            r = await asyncio.to_thread(
+                subprocess.run,
+                ["supervisorctl", "-c", "/opt/bot/docker/supervisord.conf", "restart", "ts3client"],
+                capture_output=True, text=True, timeout=60,
+            )
+            log.info("ts3client restart: rc=%s %s", r.returncode, (r.stdout or r.stderr).strip())
+            if self.cq:
+                await self.cq.close()   # ts_loop reconnects ClientQuery once the client is back
+        except Exception as e:
+            log.warning("ts3client restart failed: %s", e)
+        finally:
+            self._ts_last_write_ok = time.time()   # grace period before the next check
+            self._ts_healing = False
 
     def _cancel_unduck_timer(self):
         """Cancels any pending hysteresis hold timer."""
@@ -143,8 +193,9 @@ class App:
                 await set_audio_mute(True)
 
             away_msg = "⏸️ Paused (Empty Channel)" if self._paused_by_empty_channel else "⏸️ Idle (Empty Channel)"
+            self._empty_away_msg = away_msg
             try:
-                await self.cq.cmd(f"clientupdate client_away=1 client_away_message={escape(away_msg)}")
+                await self._cq_update(f"clientupdate client_away=1 client_away_message={escape(away_msg)}")
             except Exception:
                 pass
 
@@ -412,11 +463,14 @@ class App:
     async def ts_loop(self):
         delay = 2
         while True:
+            started = time.time()
             try:
                 await self._ts_session()
             except Exception as e:
                 log.warning("ClientQuery session ended: %s", e)
             self.ts_ok = False
+            if time.time() - started > 60:
+                delay = 2   # a healthy session ran; don't carry old backoff into this reconnect
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
 
@@ -494,11 +548,37 @@ class App:
         track metadata, volume, and ducking status. Also enforces Eco Mode auto-pause.
         """
         last_away_msg = None
+        last_away_sent = 0.0
         while True:
             try:
                 if self.ts_ok and self.cq and self.cq.connected:
+                    # Heartbeat: re-send the status at least every 30s so a dead
+                    # server link is noticed even when nothing on screen changes.
+                    if time.time() - last_away_sent > 30:
+                        last_away_msg = None
                     # While channel is empty, maintain away state and check 5m resume window expiration
                     if CFG.eco_mode and not self.channel_clients:
+                        if last_away_msg is None and self._empty_away_msg:
+                            last_away_sent = time.time()
+                            try:
+                                await self._cq_update(
+                                    f"clientupdate client_away=1 client_away_message={escape(self._empty_away_msg)}")
+                                last_away_msg = self._empty_away_msg
+                            except Exception:
+                                pass
+                        # Safety net: the one-shot pause in _handle_channel_empty can miss
+                        # (status probe failed, or BGM restarted in a race). Never let BGM
+                        # run into an empty channel. User tracks are left alone.
+                        try:
+                            st = await self.lr.status()
+                            if (st and st.get("context_uri") == CFG.chill_autoplay_uri
+                                    and not st.get("paused") and not st.get("stopped")):
+                                log.info("BGM playing into an empty channel. Pausing.")
+                                await self.lr.pause()
+                                await set_audio_mute(True)
+                                self.is_ambient_autoplay = False
+                        except Exception:
+                            pass
                         if self._paused_by_empty_channel and self._empty_channel_time:
                             if time.time() - self._empty_channel_time > CFG.eco_resume_window:
                                 log.info("Eco Mode: 5-minute resume window expired. Armed chill ambient beats for next join.")
@@ -604,13 +684,14 @@ class App:
                         away_flag = 0
 
                     if new_msg != last_away_msg:
+                        last_away_sent = time.time()
                         try:
                             cmd = f"clientupdate client_away={away_flag}"
                             if new_msg:
                                 cmd += f" client_away_message={escape(new_msg)}"
                             else:
                                 cmd += " client_away_message="
-                            await self.cq.cmd(cmd)
+                            await self._cq_update(cmd)
                             last_away_msg = new_msg
                         except Exception as e:
                             log.warning("Failed to update away message (%s): %s", new_msg, e)

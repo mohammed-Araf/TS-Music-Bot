@@ -504,7 +504,7 @@ async def login(ctx, arg):
                 os.remove(state_file)
             except Exception as e:
                 return f"Failed to reset credentials: {e}"
-        _supervisor("restart", "go-librespot")
+        await asyncio.to_thread(_supervisor, "restart", "go-librespot")
 
     code_info = None
     for _ in range(8):
@@ -540,7 +540,7 @@ async def logout(ctx, arg):
             os.remove(state_file)
         except Exception as e:
             return f"Failed to unlink credentials: {e}"
-    _supervisor("restart", "go-librespot")
+    await asyncio.to_thread(_supervisor, "restart", "go-librespot")
     return f"Spotify unlinked. To connect a new account, type [b]{ctx.cfg.prefix}login[/b]."
 
 @command("spotifykeys", "keys", "setkeys")
@@ -682,17 +682,17 @@ async def restart(ctx, arg):
 
 @command("reconnect", admin=True)
 async def reconnect(ctx, arg):
+    # Reply first: the restart drops the connection this reply would travel on.
     try:
-        url = open("/tmp/ts_url").read().strip()
-        subprocess.run(["/opt/ts3client/ts3client_runscript.sh", url],
-                       capture_output=True, text=True, timeout=20)
-        return "Reconnect requested."
-    except Exception as e:
-        return f"Reconnect failed: {e}"
+        await ctx.cq.say(ctx.cid, "🔄 Restarting TeamSpeak client, back in ~20s.")
+    except Exception:
+        pass
+    asyncio.create_task(ctx.app.heal_ts_connection(f"!reconnect by {ctx.nick}"))
+    return None
 
 @command("audio", admin=True)
 async def audio(ctx, arg):
-    r = _supervisor("restart", "go-librespot")
+    r = await asyncio.to_thread(_supervisor, "restart", "go-librespot")
     return "Audio backend restarted." if r.returncode == 0 else f"Failed: {r.stdout.strip()}"
 
 def _get_sys_resources():

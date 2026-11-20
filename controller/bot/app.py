@@ -49,7 +49,8 @@ class App:
             await self.cq.cmd(cmd)
             self._ts_last_write_ok = time.time()
         except QueryError as e:
-            if "id=1796" in str(e) and time.time() - self._ts_last_write_ok > CFG.ts_zombie_timeout:
+            if (CFG.ts_zombie_timeout > 0 and "id=1796" in str(e)
+                    and time.time() - self._ts_last_write_ok > CFG.ts_zombie_timeout):
                 asyncio.create_task(self.heal_ts_connection(
                     f"server writes refused for {time.time() - self._ts_last_write_ok:.0f}s"))
             raise
@@ -201,7 +202,7 @@ class App:
 
     async def _handle_channel_active(self):
         """Called when a user enters the channel."""
-        if not CFG.eco_mode:
+        if not CFG.eco_mode or self._ts_healing:
             return
 
         was_empty = (self._empty_channel_time is not None)
@@ -304,7 +305,7 @@ class App:
                         self._is_ducked = False
 
     async def _sync_channel_clients(self):
-        if not self.my_cid:
+        if not self.my_cid or self._ts_healing:
             return
         try:
             clines = await self.cq.cmd(f"channelclientlist cid={self.my_cid}")

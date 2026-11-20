@@ -40,8 +40,10 @@ class Config:
     chill_autoplay_uri: str = os.environ.get("CHILL_AUTOPLAY_URI", "spotify:playlist:37i9dQZF1DWWQRwui0ExPn")
     chill_volume: int = _i("CHILL_VOLUME", 20)
     ticker_interval: float = _f("TICKER_INTERVAL", 2.0)
-    # Restart the TS3 client if the server keeps refusing writes for this long
-    ts_zombie_timeout: float = _f("TS_ZOMBIE_TIMEOUT", 90.0)
+    # Restart the TS3 client if clientupdate keeps failing (id=1796) for this many
+    # seconds. 0 = off: some servers refuse clientupdate on healthy connections,
+    # which would cause a restart loop.
+    ts_zombie_timeout: float = _f("TS_ZOMBIE_TIMEOUT", 0)
 
     health_port: int = 8080
 

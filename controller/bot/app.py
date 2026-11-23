@@ -26,8 +26,19 @@ class App:
         self.ducking_enabled = CFG.auto_ducking
         self.duck_percent = CFG.duck_percent
         self.duck_hold_time = CFG.duck_hold_time
+        # channel_clients = active LISTENERS (humans who are not deafened) in the bot's
+        # current channel; this drives BGM / eco pause. channel_present = every human
+        # in the channel, deafened or not (used for voice ducking).
         self.channel_clients = set()
+        self.channel_present = set()
         self.speaking_clients = set()
+        # Home channel + drag-follow state
+        self.home_cid = None
+        self._home_resolved_at: float = 0.0
+        self._been_home: bool = False          # reached home since this ClientQuery session began
+        self._visit_empty_since: float = None  # when the visited channel last ran out of listeners
+        self._quiet_next_welcome: bool = False
+        self._chan_lock = asyncio.Lock()       # serialises channel moves and listener syncs
         self._is_ducked: bool = False
         self._unduck_timer_task = None
         self._paused_by_empty_channel: bool = False
@@ -76,6 +87,7 @@ class App:
                 pass
             await set_audio_mute(True)
             self.channel_clients.clear()
+            self.channel_present.clear()
             self.speaking_clients.clear()
             self.is_ambient_autoplay = False
             self._paused_by_empty_channel = False
@@ -156,7 +168,7 @@ class App:
         status = f.get("status")
         if not clid or clid == self.my_clid:
             return
-        if clid not in self.channel_clients:
+        if clid not in self.channel_present:
             return
 
         if status == "1":
@@ -253,6 +265,8 @@ class App:
         # Case 2: No saved user track (or expired) -> Default state: play background chill music!
         self._paused_by_empty_channel = False
         self._ready_for_ambient_autoplay = False
+        quiet = self._quiet_next_welcome
+        self._quiet_next_welcome = False
 
         if self.spotify_ok:
             try:
@@ -260,101 +274,190 @@ class App:
                 # If nothing is actively playing, start background chill music
                 if not st or st.get("paused") or st.get("stopped") or not st.get("track"):
                     await self._return_to_bgm()
-                    if self.my_cid:
+                    if self.my_cid and not quiet:
+                        if self._is_visiting():
+                            greet = ("📍 [b]Dragged in![/b] Playing background chill beats "
+                                     f"({CFG.chill_volume}%). I'll head back home once nobody here is listening.\n")
+                        else:
+                            greet = ("👋 [b]Welcome to the channel![/b] Playing background chill beats "
+                                     f"at low volume ({CFG.chill_volume}%).\n")
                         await self.cq.say(
                             self.my_cid,
-                            f"👋 [b]Welcome to the channel![/b] Playing background chill beats at low volume ({CFG.chill_volume}%).\n"
-                            f"👉 Type [b]{CFG.prefix}play <song>[/b] anytime to play your own music!"
+                            greet + f"👉 Type [b]{CFG.prefix}play <song>[/b] anytime to play your own music!"
                         )
             except Exception as e:
                 log.debug("Chill autoplay exception: %s", e)
 
+    # ------------------------------------------------------------------
+    # Listener tracking
+    # ------------------------------------------------------------------
+    def _is_visiting(self) -> bool:
+        """True while the bot sits in a channel it was dragged into."""
+        return bool(self.home_cid and self.my_cid and self.my_cid != self.home_cid)
+
     async def _handle_client_change(self, name, f):
         clid = f.get("clid")
-        if not clid or clid == self.my_clid:
+        if not clid:
             return
+        if clid == self.my_clid:
+            # The bot itself was moved (dragged by a user, or our own clientmove).
+            if name == "notifyclientmoved" and f.get("ctid"):
+                await self._on_bot_channel(f.get("ctid"))
+            return
+        ctid = f.get("ctid")
+        if ctid == self.my_cid or clid in self.channel_present:
+            if name == "notifyclientleftview" or (name == "notifyclientmoved" and ctid != self.my_cid):
+                self.speaking_clients.discard(clid)
+            await self.refresh_listeners()
 
-        if name == "notifycliententerview":
-            ctid = f.get("ctid")
-            if ctid == self.my_cid:
-                prev_count = len(self.channel_clients)
-                self.channel_clients.add(clid)
-                if prev_count == 0:
-                    asyncio.create_task(self._handle_channel_active())
-        elif name == "notifyclientleftview":
-            self.channel_clients.discard(clid)
-            self.speaking_clients.discard(clid)
-            if not self.channel_clients:
+    async def _handle_client_updated(self, f):
+        """Someone toggled deafen (speaker mute) or their output device: recount listeners."""
+        clid = f.get("clid")
+        if not clid or clid == self.my_clid or clid not in self.channel_present:
+            return
+        if "client_output_muted" in f or "client_output_hardware" in f:
+            await self.refresh_listeners()
+
+    async def _sync_listeners_locked(self):
+        """Re-read who is in the bot's channel. Returns (became_active, became_empty)."""
+        clines = await self.cq.cmd(f"channelclientlist cid={self.my_cid} -voice")
+        raw = " ".join(clines)
+        present, listening = set(), set()
+        for chunk in raw.split("|"):
+            parts = dict(kv.split("=", 1) for kv in chunk.split() if "=" in kv)
+            cid = parts.get("clid")
+            if not cid or cid == self.my_clid or parts.get("client_type") == "1":
+                continue
+            present.add(cid)
+            deaf = parts.get("client_output_muted") == "1" or parts.get("client_output_hardware") == "0"
+            if not (CFG.ignore_deafened and deaf):
+                listening.add(cid)
+
+        prev_speaking = bool(self.speaking_clients)
+        prev_empty = not self.channel_clients
+        self.channel_present = present
+        self.channel_clients = listening
+        self.speaking_clients &= present
+        if not listening:
+            self._cancel_unduck_timer()
+            if self._is_ducked:
+                await set_audio_duck(False)
+            self._is_ducked = False
+        elif prev_speaking and not self.speaking_clients:
+            if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
+                self._schedule_unduck()
+            elif self._is_ducked:
                 self._cancel_unduck_timer()
                 await set_audio_duck(False)
                 self._is_ducked = False
-                asyncio.create_task(self._handle_channel_empty())
-            elif not self.speaking_clients:
-                if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
-                    self._schedule_unduck()
-                elif self._is_ducked:
-                    self._cancel_unduck_timer()
-                    await set_audio_duck(False)
-                    self._is_ducked = False
-        elif name == "notifyclientmoved":
-            ctid = f.get("ctid")
-            if ctid == self.my_cid:
-                prev_count = len(self.channel_clients)
-                self.channel_clients.add(clid)
-                if prev_count == 0:
-                    asyncio.create_task(self._handle_channel_active())
-            else:
-                self.channel_clients.discard(clid)
-                self.speaking_clients.discard(clid)
-                if not self.channel_clients:
-                    self._cancel_unduck_timer()
-                    await set_audio_duck(False)
-                    self._is_ducked = False
-                    asyncio.create_task(self._handle_channel_empty())
-                elif not self.speaking_clients:
-                    if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
-                        self._schedule_unduck()
-                    elif self._is_ducked:
-                        self._cancel_unduck_timer()
-                        await set_audio_duck(False)
-                        self._is_ducked = False
 
-    async def _sync_channel_clients(self):
+        became_empty = not listening and (not prev_empty or self._empty_channel_time is None)
+        became_active = bool(listening) and prev_empty
+        return became_active, became_empty
+
+    async def _refresh_locked(self):
+        """Sync listeners, return home from an abandoned visit, then run eco empty/active logic."""
         if not self.my_cid or self._ts_healing:
             return
-        try:
-            clines = await self.cq.cmd(f"channelclientlist cid={self.my_cid}")
-            raw = " ".join(clines)
-            curr = set()
-            for chunk in raw.split("|"):
-                parts = dict(kv.split("=", 1) for kv in chunk.split() if "=" in kv)
-                cid = parts.get("clid")
-                ctype = parts.get("client_type")
-                if cid and cid != self.my_clid and ctype != "1":
-                    curr.add(cid)
-            prev_speaking = bool(self.speaking_clients)
-            prev_empty = (len(self.channel_clients) == 0)
-            self.channel_clients = curr
-            self.speaking_clients &= self.channel_clients
-            if not self.channel_clients:
-                self._cancel_unduck_timer()
-                await set_audio_duck(False)
-                self._is_ducked = False
-            elif prev_speaking and not self.speaking_clients:
-                if self.ducking_enabled and not self.is_ambient_autoplay and self._is_ducked:
-                    self._schedule_unduck()
-                elif self._is_ducked:
-                    self._cancel_unduck_timer()
-                    await set_audio_duck(False)
-                    self._is_ducked = False
+        became_active, became_empty = await self._sync_listeners_locked()
+        if self._is_visiting() and CFG.follow_drag:
+            if self.channel_clients:
+                self._visit_empty_since = None
+            else:
+                now = time.time()
+                if self._visit_empty_since is None:
+                    self._visit_empty_since = now
+                if now - self._visit_empty_since >= CFG.return_home_delay:
+                    log.info("Nobody listening in visited channel cid=%s. Returning home.", self.my_cid)
+                    if await self._move_home_locked():
+                        return
+        if became_empty:
+            await self._handle_channel_empty()
+        elif became_active:
+            await self._handle_channel_active()
 
-            if len(self.channel_clients) == 0:
-                if not prev_empty or self._empty_channel_time is None:
-                    asyncio.create_task(self._handle_channel_empty())
-            elif len(self.channel_clients) > 0 and prev_empty:
-                asyncio.create_task(self._handle_channel_active())
+    async def refresh_listeners(self):
+        try:
+            async with self._chan_lock:
+                await self._refresh_locked()
         except Exception as e:
             log.debug("Failed to sync channel clients: %s", e)
+
+    # ------------------------------------------------------------------
+    # Channel moves (drag-follow / return home)
+    # ------------------------------------------------------------------
+    async def _reset_for_channel_change(self):
+        """Drop whatever was playing: a dragged bot never carries the old channel's music along."""
+        self._cancel_unduck_timer()
+        if self._is_ducked:
+            await set_audio_duck(False)
+        self._is_ducked = False
+        try:
+            await self.lr.pause()
+        except Exception:
+            pass
+        await set_audio_mute(True)
+        self.is_ambient_autoplay = False
+        self._paused_by_empty_channel = False
+        self._ready_for_ambient_autoplay = False
+        self._empty_channel_time = None
+        self._empty_away_msg = ""
+        self._visit_empty_since = None
+        self.channel_clients = set()
+        self.channel_present = set()
+        self.speaking_clients = set()
+
+    async def _apply_bot_channel_locked(self, cid):
+        """Record the bot's (possibly new) channel and react to it."""
+        old = self.my_cid
+        self.my_cid = cid
+        if cid and cid == self.home_cid:
+            self._been_home = True
+        # Not home yet since (re)connecting, or drag-follow disabled: go straight home.
+        if self._is_visiting() and (not CFG.follow_drag or not self._been_home):
+            if await self._move_home_locked(quiet=False):
+                return
+        if old is not None and old != cid:
+            log.info("Bot moved from channel cid=%s to cid=%s (%s). Resetting playback.",
+                     old, cid, "visiting" if self._is_visiting() else "home")
+            await self._reset_for_channel_change()
+        await self._refresh_locked()
+
+    async def _on_bot_channel(self, cid):
+        try:
+            async with self._chan_lock:
+                if cid != self.my_cid:
+                    await self._apply_bot_channel_locked(cid)
+        except Exception as e:
+            log.warning("Channel change handling failed: %s", e)
+
+    async def _move_home_locked(self, quiet: bool = True) -> bool:
+        if not self.home_cid or not self.my_clid:
+            return False
+        cmd = f"clientmove cid={self.home_cid} clid={self.my_clid}"
+        if CFG.ts_channel_password:
+            cmd += f" cpw={escape(CFG.ts_channel_password)}"
+        try:
+            await self.cq.cmd(cmd)
+        except Exception as e:
+            log.warning("Failed to move bot home to cid=%s: %s", self.home_cid, e)
+            return False
+        was_elsewhere = self.my_cid is not None and self.my_cid != self.home_cid
+        self.my_cid = self.home_cid
+        self._been_home = True
+        log.info("Moved bot to home channel cid=%s", self.home_cid)
+        if was_elsewhere:
+            await self._reset_for_channel_change()
+        self._quiet_next_welcome = quiet
+        await self._refresh_locked()
+        return True
+
+    async def go_home(self) -> bool:
+        """Public: send the bot back to its home channel (used by !home)."""
+        async with self._chan_lock:
+            if not self._is_visiting():
+                return False
+            return await self._move_home_locked()
 
     async def on_event(self, name, f):
         if name == "notifytalkstatuschange":
@@ -362,6 +465,9 @@ class App:
             return
         if name in ("notifyclientmoved", "notifyclientleftview", "notifycliententerview"):
             await self._handle_client_change(name, f)
+            return
+        if name == "notifyclientupdated":
+            await self._handle_client_updated(f)
             return
         if name != "notifytextmessage" or f.get("targetmode") != "2":
             return
@@ -439,27 +545,28 @@ class App:
             log.warning("Failed to resolve target channel: %s", e)
         return None
 
-    async def _ensure_channel(self):
-        if not CFG.ts_channel or not self.my_clid:
+    async def _update_home_cid(self, current_cid):
+        """Resolve TS_CHANNEL to a cid (cached for 60s). Without TS_CHANNEL the first
+        channel the bot lands in becomes home."""
+        if not CFG.ts_channel:
+            if self.home_cid is None:
+                self.home_cid = current_cid
+            return
+        if self.home_cid and time.time() - self._home_resolved_at < 60:
             return
         cid = await self._resolve_target_cid()
-        if cid and self.my_cid != cid:
-            cmd = f"clientmove cid={cid} clid={self.my_clid}"
-            if CFG.ts_channel_password:
-                cmd += f" cpw={CFG.ts_channel_password}"
-            try:
-                await self.cq.cmd(cmd)
-                self.my_cid = cid
-                log.info("Moved bot to channel cid=%s", cid)
-            except Exception as e:
-                log.warning("Failed to move bot to channel cid=%s: %s", cid, e)
+        if cid:
+            self.home_cid = cid
+            self._home_resolved_at = time.time()
 
     async def _ts_session(self):
         """Connect to ClientQuery, register for chat events, keep the connection alive."""
         self.cq = ClientQuery(CFG.cq_host, CFG.cq_port, CFG.cq_apikey, self.on_event)
         await self.cq.connect()
+        self._been_home = False
         sch = (await self.cq.kv("currentschandlerid")).get("schandlerid", "1")
-        for ev in ("notifytextmessage", "notifytalkstatuschange", "notifyclientmoved", "notifyclientleftview", "notifycliententerview"):
+        for ev in ("notifytextmessage", "notifytalkstatuschange", "notifyclientmoved",
+                   "notifyclientleftview", "notifycliententerview", "notifyclientupdated"):
             try:
                 await self.cq.cmd(f"clientnotifyregister schandlerid={sch} event={ev}")
             except Exception as e:
@@ -467,11 +574,13 @@ class App:
         while self.cq.connected:
             try:
                 who = await self.cq.kv("whoami")      # fails if not connected to a server
-                self.my_clid, self.my_cid = who.get("clid"), who.get("cid")
+                self.my_clid = who.get("clid")
+                cid = who.get("cid")
                 self.ts_ok = bool(self.my_clid)
-                if self.ts_ok:
-                    await self._ensure_channel()
-                    await self._sync_channel_clients()
+                if self.ts_ok and not self._ts_healing:
+                    await self._update_home_cid(cid)
+                    async with self._chan_lock:
+                        await self._apply_bot_channel_locked(cid)
             except (QueryError, asyncio.TimeoutError) as e:
                 self.ts_ok = False
                 # The client never auto-reconnects after a server drop (autoreconnect=0),

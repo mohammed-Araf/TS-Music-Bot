@@ -44,6 +44,15 @@ class Config:
     # refused (id=1796, zombie link), for this many seconds. 0 = off.
     ts_zombie_timeout: float = _f("TS_ZOMBIE_TIMEOUT", 120)
 
+    # Channel drag behaviour. When true, a user may drag the bot into another
+    # channel; it resets to BGM there and heads home as soon as nobody is left
+    # listening. When false, the bot snaps straight back to TS_CHANNEL.
+    follow_drag: bool = os.environ.get("FOLLOW_DRAG", "true").lower() in ("true", "1", "yes")
+    # Seconds a visited channel may sit without listeners before the bot returns home. 0 = instantly.
+    return_home_delay: float = _f("RETURN_HOME_DELAY", 0)
+    # Deafened clients (speakers muted / output disabled) do not count as listeners.
+    ignore_deafened: bool = os.environ.get("IGNORE_DEAFENED", "true").lower() in ("true", "1", "yes")
+
     health_port: int = 8080
 
 CFG = Config()

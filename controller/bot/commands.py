@@ -967,9 +967,22 @@ async def chill(ctx, arg):
             log.warning("chill command failed: %s", e)
             return "⚠️ Unable to start chill background music."
 
+@command("home")
+async def home(ctx, arg):
+    """Send the bot back to its home channel after it was dragged somewhere."""
+    if not ctx.app or not ctx.app._is_visiting():
+        return "🏠 I'm already in my home channel."
+    try:
+        await ctx.cq.say(ctx.cid, "🏠 Heading back to my home channel. Bye!")
+    except Exception:
+        pass
+    if not await ctx.app.go_home():
+        return "⚠️ Couldn't move back home right now. I'll retry automatically once nobody here is listening."
+    return None
+
 @command("help", "h")
 async def help_(ctx, arg):
     p = ctx.cfg.prefix
     return (f"{p}play <name|link>, {p}queue <name|link>, {p}chill, {p}pause, {p}resume, {p}skip, "
-            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}duck, {p}login, {p}spotifykeys, {p}myroles | "
+            f"{p}prev, {p}vol <0-{ctx.cfg.max_volume}>, {p}np, {p}duck, {p}home, {p}login, {p}spotifykeys, {p}myroles | "
             f"admin: {p}logout, {p}restart, {p}reconnect, {p}audio, {p}status")

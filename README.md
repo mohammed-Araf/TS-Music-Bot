@@ -238,6 +238,7 @@ All commands use the prefix defined in `.env.common` (default `!`):
 | `!prev` (or `!back`) | Everyone / Allowed Role | Return to previous track. |
 | `!vol <0-80>` (or `!v`) | Everyone / Allowed Role | Adjust volume. When BGM is active, pre-registers volume for when songs play. |
 | `!duck` | Everyone / Allowed Role | Toggle conversational voice ducking on/off. |
+| `!home` | Everyone / Allowed Role | Send the bot back to its home channel after it was dragged away. |
 | `!np` | Everyone / Allowed Role | Show currently playing song title and artist. |
 | `!login` (or `!pair`) | Allowed Role / Admin | Pair a Spotify Premium account directly via `spotify.com/pair` link. |
 | `!login force` | Admin | Force-generate a brand-new pairing URL and invalidate old device tokens. |
@@ -258,6 +259,8 @@ All commands use the prefix defined in `.env.common` (default `!`):
 - **Separated Volume Controls:** BGM volume is locked at 20% to keep voice chat clear. Setting volume (e.g. `!v 60`) during BGM pre-registers your preferred volume level so it instantly activates the moment anyone starts a song!
 - **Conversational Voice Ducking:** When users talk, the bot smoothly reduces music volume to 30%. A conversational hysteresis hold window (1.8s) ensures natural pauses between speakers don't cause annoying audio volume bounces. Ducking automatically disables during BGM.
 - **Eco-Mode Auto-Pause:** When everyone leaves the channel, the bot immediately pauses audio and enters away status. If someone returns within 5 minutes, audio seamlessly resumes right where it left off; after 5 minutes, it resets to ambient chill beats upon the next arrival.
+- **Drag-to-Visit Channels:** Users can drag the bot into another channel. It drops whatever it was playing, resets, and starts the default background music for the people there. As soon as nobody in that channel is listening (everyone left or deafened), it instantly walks back to its home channel (`TS_CHANNEL`). There it plays BGM if anyone is listening, or stays silent if not. Set `FOLLOW_DRAG=false` to make the bot snap straight back instead, or `RETURN_HOME_DELAY=<seconds>` to add a grace period.
+- **Deafened Users Don't Count:** A user with their speakers muted (deafened) is treated as absent. A home channel holding only deafened users stays silent, and a dragged bot whose only company is deafened goes home. Set `IGNORE_DEAFENED=false` to count them again.
 - **Live TeamSpeak Ticker:** The bot's away status updates every 5s with a live progress bar, current time, volume indicator (`[Vol:X%]`), and mode indicator (`[Duck:ON]` or `[BGM]`), safely optimized for TeamSpeak's character limits.
 - **Dual RAM Reporting:** `!status` accurately displays both your isolated Docker container memory allocation and the host VPS memory.
 

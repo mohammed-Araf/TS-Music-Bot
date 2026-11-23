@@ -849,7 +849,7 @@ class App:
         dur_s = int(track.get("duration", 0)) // 1000
         times = f"{self._clock(pos_s)} / {self._clock(dur_s)}" if dur_s > 0 else self._clock(pos_s)
         vol = st.get("volume", CFG.initial_volume)
-        bgm = self.is_ambient_autoplay
+        bgm = self.is_ambient_autoplay or st.get("context_uri") == CFG.chill_autoplay_uri
 
         if track and not st.get("paused") and not st.get("stopped"):
             if self.combined_status_line:

@@ -587,22 +587,33 @@ class App:
                 await self.cq.cmd(f"clientnotifyregister schandlerid={sch} event={ev}")
             except Exception as e:
                 log.warning("Failed to register %s: %s", ev, e)
+        failures = 0
         while self.cq.connected:
             try:
                 who = await self.cq.kv("whoami")      # fails if not connected to a server
                 self.my_clid = who.get("clid")
                 cid = who.get("cid")
                 self.ts_ok = bool(self.my_clid)
+                failures = 0 if self.ts_ok else failures + 1
                 if self.ts_ok and not self._ts_healing:
                     await self._update_home_cid(cid)
                     async with self._chan_lock:
                         await self._apply_bot_channel_locked(cid)
             except (QueryError, asyncio.TimeoutError) as e:
                 self.ts_ok = False
+                failures += 1
+                if failures == 1:
+                    log.info("whoami failed: %s", e)
                 # The client never auto-reconnects after a server drop (autoreconnect=0),
                 # so a lasting "not connected" needs a restart too.
                 if "id=1794" in str(e):
                     self._maybe_auto_heal("TS client not connected to server")
+            # A ClientQuery session opened while the TS client was still starting can stay
+            # bound to a dead server tab forever. Open a fresh session after ~30s of failures.
+            if failures >= 6 and not self._ts_healing:
+                log.warning("whoami failing for %ds on this ClientQuery session. Reconnecting.", failures * 5)
+                await self.cq.close()
+                return
             await asyncio.sleep(5)
 
     async def ts_loop(self):

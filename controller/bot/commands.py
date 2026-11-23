@@ -134,6 +134,9 @@ async def play(ctx, arg):
                 f"👉 Please renew your Spotify Premium subscription, or an admin can link a different Premium account using: [b]{ctx.cfg.prefix}login force[/b]"
             )
 
+        if ctx.app:
+            ctx.app.requested_by = ctx.nick
+
         # Ensure volume is immediately set to user's registered volume
         try:
             await ctx.lr.volume(target_vol)

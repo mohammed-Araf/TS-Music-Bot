@@ -1,4 +1,4 @@
-import os, json, asyncio, logging, time, subprocess
+import os, re, json, asyncio, logging, time, subprocess
 import aiohttp
 from aiohttp import web
 from .config import CFG
@@ -9,6 +9,12 @@ from .commands import REGISTRY, Ctx
 from .ratelimit import RateLimiter
 from .pulse import set_audio_mute, set_audio_duck
 from .guard import GUARD, ACTION_PLAY, ACTION_PAUSE, ACTION_STOP
+
+_CLOCK_RE = re.compile(r"\d+:\d{2}|[━─●]+")
+
+def _strip_clock(text: str) -> str:
+    """Description text with the moving parts (times, progress bar) removed."""
+    return _CLOCK_RE.sub("", text or "")
 
 log = logging.getLogger("app")
 
@@ -54,6 +60,12 @@ class App:
         self._ts_healing: bool = False
         self._ts_last_heal: float = 0.0
         self._empty_away_msg: str = ""
+        # Player display: line 2 = away status (song), line 3 = client description (progress).
+        self.requested_by: str = ""             # nick of whoever started the current !play
+        self._my_dbid = None                    # bot's client database id (for clientdbedit)
+        self._desc_ok = None                    # None = untested, False = no permission (fallback)
+        self._last_desc = None
+        self._last_desc_sent: float = 0.0
 
     async def _cq_update(self, cmd: str):
         """Run a server-bound ClientQuery write and feed the zombie watchdog."""
@@ -125,6 +137,7 @@ class App:
         if not self.spotify_ok or not self.channel_clients:
             return
         self.is_ambient_autoplay = True
+        self.requested_by = ""
         self._paused_by_empty_channel = False
         self._ready_for_ambient_autoplay = False
         try:
@@ -564,6 +577,9 @@ class App:
         self.cq = ClientQuery(CFG.cq_host, CFG.cq_port, CFG.cq_apikey, self.on_event)
         await self.cq.connect()
         self._been_home = False
+        self._my_dbid = None          # client db id can change if the identity changes
+        self._desc_ok = None          # re-test permissions on every new session
+        self._last_desc = None
         sch = (await self.cq.kv("currentschandlerid")).get("schandlerid", "1")
         for ev in ("notifytextmessage", "notifytalkstatuschange", "notifyclientmoved",
                    "notifyclientleftview", "notifycliententerview", "notifyclientupdated"):
@@ -708,6 +724,7 @@ class App:
                                 self.is_ambient_autoplay = False
                         except Exception:
                             pass
+                        await self._set_description(f"Type {CFG.prefix}play <song> to start the music")
                         if self._paused_by_empty_channel and self._empty_channel_time:
                             if time.time() - self._empty_channel_time > CFG.eco_resume_window:
                                 log.info("Eco Mode: 5-minute resume window expired. Armed chill ambient beats for next join.")
@@ -763,54 +780,8 @@ class App:
                             log.info("Playback ended or stopped with users in channel. Returning to default ambient chill music.")
                             await self._return_to_bgm()
 
-                    if self.is_ambient_autoplay:
-                        duck_tag = "BGM"
-                    else:
-                        duck_tag = "Duck:ON" if self.ducking_enabled else "Duck:OFF"
-
-                    new_msg = None
-                    away_flag = 1
-
-                    if not st or not st.get("username"):
-                        new_msg = f"⚠️ Disconnected | Type {CFG.prefix}login"
-                        away_flag = 1
-                    elif st and not st.get("paused") and not st.get("stopped") and st.get("track"):
-                        vol = st.get("volume", CFG.initial_volume)
-                        track = st.get("track", {})
-                        title = track.get("name", "Unknown Track")
-                        artists_raw = track.get("artist_names", [])
-                        artists = ", ".join(artists_raw) if isinstance(artists_raw, list) else str(artists_raw)
-                        dur_ms = track.get("duration", 0)
-                        pos_ms = track.get("position", 0)
-                        pos_s, dur_s = pos_ms // 1000, dur_ms // 1000
-                        if dur_s > 0:
-                            pct = min(max(pos_s / dur_s, 0.0), 1.0)
-                            filled = int(round(pct * 8))
-                            bar = "█" * filled + "░" * (8 - filled)
-                            time_str = f"{pos_s // 60}:{pos_s % 60:02d}/{dur_s // 60}:{dur_s % 60:02d}"
-                        else:
-                            bar = "░" * 8
-                            time_str = "0:00"
-
-                        suffix = f"[{bar}] {time_str} [Vol:{vol}%] [{duck_tag}]"
-                        # TeamSpeak 3 has a strict 80-character limit for client_away_message.
-                        # Cap total string length at 75 to guarantee safety under all conditions.
-                        max_track_len = max(10, 75 - len("▶ ") - len(suffix) - 1)
-                        track_name = f"{title} - {artists}" if artists else title
-                        if len(track_name) > max_track_len:
-                            track_name = track_name[:max_track_len - 1] + "…"
-                        new_msg = f"▶ {track_name} {suffix}"
-                        if len(new_msg) > 75:
-                            new_msg = new_msg[:75]
-                        away_flag = 0
-                    elif st and st.get("paused"):
-                        vol = st.get("volume", CFG.initial_volume)
-                        new_msg = f"⏸️ Paused [Vol:{vol}%] [{duck_tag}]"
-                        away_flag = 0
-                    else:
-                        vol = st.get("volume", CFG.initial_volume) if st else CFG.initial_volume
-                        new_msg = f"🎵 Ready [Vol:{vol}%] [{duck_tag}]"
-                        away_flag = 0
+                    away_flag, new_msg, desc = self._build_display(st)
+                    await self._set_description(desc)
 
                     if new_msg != last_away_msg:
                         last_away_sent = time.time()
@@ -827,6 +798,110 @@ class App:
             except Exception as e:
                 log.debug("UI ticker error: %s", e)
             await asyncio.sleep(CFG.ticker_interval)
+
+    # ------------------------------------------------------------------
+    # Player display (info panel)
+    # ------------------------------------------------------------------
+    # TeamSpeak shows the bot's panel as: name / [away status] / description.
+    # Away status (80 chars) carries what is playing; the description (plain text,
+    # one line, BBCode not rendered) carries the progress bar, volume and requester.
+    AWAY_MAX = 78
+    DESC_MAX = 190
+
+    @staticmethod
+    def _fit(text: str, limit: int) -> str:
+        return text if len(text) <= limit else text[:limit - 1] + "…"
+
+    @staticmethod
+    def _clock(sec: int) -> str:
+        return f"{sec // 60}:{sec % 60:02d}"
+
+    @staticmethod
+    def _progress_bar(pos_s: int, dur_s: int, width: int = 16) -> str:
+        if dur_s <= 0:
+            return "●" + "─" * (width - 1)
+        filled = int(round(min(max(pos_s / dur_s, 0.0), 1.0) * (width - 1)))
+        return "━" * filled + "●" + "─" * (width - 1 - filled)
+
+    def _build_display(self, st):
+        """Return (away_flag, away_message, description) for the current Spotify state."""
+        p = CFG.prefix
+        if not st or not st.get("username"):
+            return 1, "⚠️ Spotify disconnected", f"Type {p}login to link a Spotify Premium account"
+
+        track = st.get("track") or {}
+        title = track.get("name") or "Unknown track"
+        artists_raw = track.get("artist_names", [])
+        artists = ", ".join(artists_raw) if isinstance(artists_raw, list) else str(artists_raw or "")
+        song = f"{title} — {artists}" if artists else title
+        pos_s = int(track.get("position", 0)) // 1000
+        dur_s = int(track.get("duration", 0)) // 1000
+        times = f"{self._clock(pos_s)} / {self._clock(dur_s)}" if dur_s > 0 else self._clock(pos_s)
+        vol = st.get("volume", CFG.initial_volume)
+        bgm = self.is_ambient_autoplay
+
+        if track and not st.get("paused") and not st.get("stopped"):
+            if self.combined_status_line:
+                # No description permission: squeeze everything into the away status.
+                tail = f" {self._progress_bar(pos_s, dur_s, 8)} {times}"
+                head = "♫ " if bgm else "▶ "
+                return 0, head + self._fit(song, self.AWAY_MAX - len(head) - len(tail)) + tail, ""
+            bits = [f"{self._progress_bar(pos_s, dur_s)} {times}"]
+            if bgm:
+                bits += [f"BGM {vol}%", f"type {p}play <song>"]
+            else:
+                bits.append(f"Vol {vol}%")
+                if self._is_ducked or not self.ducking_enabled:
+                    bits.append("ducking off" if not self.ducking_enabled else "ducked")
+                if self.requested_by:
+                    bits.append(f"req. by {self.requested_by}")
+            head = "♫ " if bgm else "▶ "
+            return 0, head + self._fit(song, self.AWAY_MAX - len(head)), self._fit(" · ".join(bits), self.DESC_MAX)
+
+        if track and st.get("paused"):
+            away = "⏸️ " + self._fit(song, self.AWAY_MAX - 3)
+            if self.combined_status_line:
+                return 0, self._fit(f"{away} · {times}", self.AWAY_MAX), ""
+            return 0, away, f"Paused at {times} · type {p}resume"
+
+        return 0, "🎵 Ready", f"Type {p}play <song> to start the music"
+
+    @property
+    def combined_status_line(self) -> bool:
+        """True when the description can't be written, so the away line must carry everything."""
+        return not CFG.player_description or self._desc_ok is False
+
+    async def _set_description(self, text: str):
+        """Write the bot's client description (throttled; disables itself without permission)."""
+        if self.combined_status_line or not self.my_clid:
+            return
+        now = time.time()
+        if text == self._last_desc and now - self._last_desc_sent < 60:
+            return
+        # Progress ticks change the text every second; only rewrite every desc_interval,
+        # but react immediately when the song or state (not just the clock) changes.
+        if (self._last_desc is not None and now - self._last_desc_sent < CFG.desc_interval
+                and _strip_clock(text) == _strip_clock(self._last_desc)):
+            return
+        try:
+            if self._my_dbid is None:
+                self._my_dbid = (await self.cq.kv(
+                    f"clientvariable clid={self.my_clid} client_database_id")).get("client_database_id")
+            if not self._my_dbid:
+                return
+            await self._cq_update(f"clientdbedit cldbid={self._my_dbid} client_description={escape(text)}")
+            self._desc_ok = True
+            self._last_desc, self._last_desc_sent = text, now
+        except QueryError as e:
+            if "id=2568" in str(e):
+                self._desc_ok = False
+                log.warning("No permission to edit the bot's description (%s). Falling back to a "
+                            "single status line. Grant the bot 'Modify all Client Descriptions' "
+                            "(b_client_modify_description) to enable the player panel.", e)
+            else:
+                log.debug("Description update failed: %s", e)
+        except Exception as e:
+            log.debug("Description update failed: %s", e)
 
     async def spotify_events_loop(self):
         """

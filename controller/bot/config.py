@@ -53,6 +53,13 @@ class Config:
     # Deafened clients (speakers muted / output disabled) do not count as listeners.
     ignore_deafened: bool = os.environ.get("IGNORE_DEAFENED", "true").lower() in ("true", "1", "yes")
 
+    # Player panel: write progress/volume/requester into the bot's client description
+    # (needs the bot to hold b_client_modify_description). Without the permission the
+    # bot falls back to a single status line automatically.
+    player_description: bool = os.environ.get("PLAYER_DESCRIPTION", "true").lower() in ("true", "1", "yes")
+    # Minimum seconds between description rewrites while only the clock is moving.
+    desc_interval: float = _f("DESC_INTERVAL", 5)
+
     health_port: int = 8080
 
 CFG = Config()
